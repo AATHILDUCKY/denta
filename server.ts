@@ -1,20 +1,23 @@
 import express from "express";
-import { createServer as createViteServer } from "vite";
 import path from "path";
-import { fileURLToPath } from "url";
 import { prisma } from "./src/lib/prisma";
 import { UserRole } from "@prisma/client";
 import crypto from "crypto";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 dotenv.config();
+
+function getPort() {
+  const portArgIndex = process.argv.findIndex((arg) => arg === "-p" || arg === "--port");
+  const cliPort = portArgIndex >= 0 ? process.argv[portArgIndex + 1] : "";
+  const port = Number(process.env.PORT || cliPort || 3000);
+  return Number.isFinite(port) && port > 0 ? port : 3000;
+}
 
 async function startServer() {
   const app = express();
-  const PORT = Number(process.env.PORT || 3000);
+  const PORT = getPort();
   const SESSION_COOKIE = "dentacare_auth";
   const SESSION_MAX_AGE_MS = 1000 * 60 * 60 * 8;
   const ADMIN_USERNAME = String(process.env.ADMIN_USERNAME || "");
@@ -1221,6 +1224,7 @@ async function startServer() {
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
