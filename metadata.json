@@ -1,0 +1,9 @@
+{
+  "name": "DentaCare Pro",
+  "description": "Comprehensive dental clinic platform featuring patient management, online booking, professional portfolio, and admin dashboard with real-time analytics.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": []
+}
