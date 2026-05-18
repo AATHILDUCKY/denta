@@ -11,8 +11,8 @@ dotenv.config();
 function getPort() {
   const portArgIndex = process.argv.findIndex((arg) => arg === "-p" || arg === "--port");
   const cliPort = portArgIndex >= 0 ? process.argv[portArgIndex + 1] : "";
-  const port = Number(process.env.PORT || cliPort || 3000);
-  return Number.isFinite(port) && port > 0 ? port : 3000;
+  const port = Number(process.env.PORT || cliPort || 3001);
+  return Number.isFinite(port) && port > 0 ? port : 3001;
 }
 
 async function startServer() {
@@ -20,6 +20,7 @@ async function startServer() {
   const PORT = getPort();
   const SESSION_COOKIE = "dentacare_auth";
   const SESSION_MAX_AGE_MS = 1000 * 60 * 60 * 8;
+  const COOKIE_SECURE = process.env.COOKIE_SECURE === "true";
   const ADMIN_USERNAME = String(process.env.ADMIN_USERNAME || "");
   const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || "");
   const SESSION_SECRET = String(process.env.SESSION_SECRET || "");
@@ -274,7 +275,7 @@ async function startServer() {
     const token = signToken(user);
     res.cookie(SESSION_COOKIE, token, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: COOKIE_SECURE,
       sameSite: "strict",
       maxAge: SESSION_MAX_AGE_MS,
       path: "/",
@@ -285,7 +286,7 @@ async function startServer() {
   app.post("/api/auth/logout", (_req, res) => {
     res.clearCookie(SESSION_COOKIE, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: COOKIE_SECURE,
       sameSite: "strict",
       path: "/",
     });

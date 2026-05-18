@@ -3,8 +3,13 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Chrome } from 'lucide-react';
 import { motion } from 'motion/react';
 import { loginAdmin } from '../lib/session';
+import { UserProfile } from '../types';
 
-export default function Login() {
+interface LoginProps {
+  onLogin: (user: UserProfile) => void;
+}
+
+export default function Login({ onLogin }: LoginProps) {
   const [loading, setLoading] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -15,9 +20,9 @@ export default function Login() {
     setLoading(true);
     setError('');
     try {
-      await loginAdmin(username, password);
-      navigate('/dashboard');
-      window.location.reload();
+      const user = await loginAdmin(username, password);
+      onLogin(user);
+      navigate('/dashboard', { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed.');
     } finally {

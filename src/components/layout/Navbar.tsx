@@ -6,15 +6,17 @@ import { logoutUser } from '../../lib/session';
 
 interface NavbarProps {
   user: UserProfile | null;
+  onLogout: () => void;
 }
 
-export default function Navbar({ user }: NavbarProps) {
+export default function Navbar({ user, onLogout }: NavbarProps) {
   const [isOpen, setIsOpen] = useState(false);
   const location = useLocation();
   const isHome = location.pathname === '/';
 
   const handleLogout = async () => {
     await logoutUser();
+    onLogout();
     window.location.href = '/';
   };
 
@@ -59,6 +61,15 @@ export default function Navbar({ user }: NavbarProps) {
                   >
                     <User className="h-4 w-4" />
                     <span>Portal</span>
+                  </Link>
+                )}
+                {user.role === 'admin' && (
+                  <Link
+                    to="/dashboard"
+                    className="flex items-center space-x-2 text-[10px] uppercase tracking-widest font-bold text-brand-muted hover:text-brand-ink transition-colors"
+                  >
+                    <User className="h-4 w-4" />
+                    <span>Dashboard</span>
                   </Link>
                 )}
                 <button
@@ -121,6 +132,15 @@ export default function Navbar({ user }: NavbarProps) {
                   className="block rounded-xl px-4 py-3 text-sm font-semibold text-brand-muted hover:bg-brand-bg hover:text-brand-ink"
                 >
                   Patient Portal
+                </Link>
+              )}
+              {user.role === 'admin' && (
+                <Link
+                  to="/dashboard"
+                  onClick={() => setIsOpen(false)}
+                  className="block rounded-xl px-4 py-3 text-sm font-semibold text-brand-muted hover:bg-brand-bg hover:text-brand-ink"
+                >
+                  Dashboard
                 </Link>
               )}
               <button

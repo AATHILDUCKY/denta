@@ -1,7 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { useState, useEffect } from 'react';
 import { UserProfile } from './types';
-import { getAuthenticatedUser } from './lib/session';
+import { getAuthenticatedUser, getSessionUser } from './lib/session';
 
 // Pages - to be created
 import Home from './pages/Home';
@@ -15,7 +15,7 @@ import PatientPortal from './pages/PatientPortal';
 import Navbar from './components/layout/Navbar';
 
 export default function App() {
-  const [user, setUser] = useState<UserProfile | null>(null);
+  const [user, setUser] = useState<UserProfile | null>(() => getSessionUser());
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -38,7 +38,7 @@ export default function App() {
   return (
     <Router>
       <div className="min-h-screen bg-brand-bg font-sans text-brand-ink">
-        <Navbar user={user} />
+        <Navbar user={user} onLogout={() => setUser(null)} />
         <main>
           <Routes>
             <Route path="/" element={<Home />} />
@@ -48,7 +48,7 @@ export default function App() {
             <Route path="/doctors" element={<Doctors />} />
             <Route path="/docters" element={<Doctors />} />
             <Route path="/book" element={<Booking />} />
-            <Route path="/login" element={<Login />} />
+            <Route path="/login" element={user?.role === 'admin' ? <Navigate to="/dashboard" replace /> : <Login onLogin={setUser} />} />
             
             <Route
               path="/dashboard/*"
