@@ -108,12 +108,12 @@ export default function Home() {
         />
         <div className="absolute inset-0 bg-gradient-to-r from-white via-white/92 to-white/36" />
         <div className="absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-brand-bg-soft to-transparent" />
-        <div className="relative max-w-7xl mx-auto px-6 sm:px-10 lg:px-16 xl:px-24 pt-36 lg:pt-44 pb-20 min-h-[86vh] grid lg:grid-cols-12 gap-10 items-center">
+        <div className="relative max-w-7xl mx-auto px-6 sm:px-10 lg:px-16 xl:px-24 pt-36 lg:pt-44 pb-20 min-h-[86vh] flex items-center">
           <motion.div
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.55 }}
-            className="lg:col-span-7 max-w-3xl"
+            className="max-w-3xl"
           >
             <p className="text-[11px] uppercase tracking-[0.18em] text-brand-secondary font-bold">{clinic.name} in Kinniya</p>
             <h1 className="mt-5 text-5xl sm:text-6xl lg:text-7xl leading-[0.96] font-sans font-extrabold text-brand-ink">
@@ -127,7 +127,7 @@ export default function Home() {
                 to="/book"
                 className="inline-flex items-center justify-center gap-2 rounded-full bg-brand-accent px-7 py-3.5 text-sm font-bold uppercase tracking-[0.1em] text-white transition hover:brightness-95"
               >
-                Book Crown & Bridge Visit
+                Book Appointment
                 <ArrowRight className="h-4 w-4" />
               </Link>
               <Link
@@ -148,38 +148,6 @@ export default function Home() {
               </a>
             </div>
           </motion.div>
-
-          <motion.aside
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.55, delay: 0.12 }}
-            className="lg:col-span-5 rounded-lg border border-brand-border bg-white/94 p-6 shadow-[0_28px_70px_-46px_rgba(15,31,70,0.9)]"
-          >
-            <p className="text-[11px] uppercase tracking-[0.18em] text-brand-secondary font-bold">Patient Fast Track</p>
-            <h2 className="mt-3 text-3xl font-serif text-brand-ink">Call, visit, or book online</h2>
-            <div className="mt-6 space-y-4">
-              {[
-                ['Doctor', clinic.doctor],
-                ['Treatment focus', 'Crowns, bridges, broken teeth, missing tooth spaces'],
-                ['Clinic', clinic.address],
-              ].map(([label, value]) => (
-                <div key={label} className="border-b border-brand-border pb-4 last:border-b-0 last:pb-0">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-brand-muted">{label}</p>
-                  <p className="mt-1 font-semibold text-brand-ink">{value}</p>
-                </div>
-              ))}
-            </div>
-            <div className="mt-7 grid gap-3">
-              <Link to="/book" className="inline-flex items-center justify-center gap-2 rounded-full bg-brand-primary px-6 py-3 text-xs font-bold uppercase tracking-[0.12em] text-white hover:brightness-95">
-                Book Appointment
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-              <a href={clinic.mapUrl} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-full border border-brand-border px-6 py-3 text-xs font-bold uppercase tracking-[0.12em] text-brand-ink hover:bg-brand-bg">
-                Get Directions
-                <Navigation className="h-4 w-4" />
-              </a>
-            </div>
-          </motion.aside>
         </div>
       </section>
 
