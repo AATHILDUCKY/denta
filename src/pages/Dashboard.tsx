@@ -280,7 +280,7 @@ function DashboardAppointments({ userRole }: { userRole: UserProfile['role'] }) 
     lastName: '',
     email: '',
     phone: '',
-    treatmentType: 'Consultation',
+    treatmentType: 'Crown & Bridge Consultation',
     date: '',
     time: '',
     notes: '',
@@ -320,7 +320,7 @@ function DashboardAppointments({ userRole }: { userRole: UserProfile['role'] }) 
       lastName: '',
       email: '',
       phone: '',
-      treatmentType: 'Consultation',
+      treatmentType: 'Crown & Bridge Consultation',
       date: '',
       time: '',
       notes: '',
@@ -827,7 +827,7 @@ function DashboardAppointments({ userRole }: { userRole: UserProfile['role'] }) 
           }} />
           <div className="relative w-full max-w-2xl border border-brand-border bg-white p-6 shadow-2xl">
             <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-brand-primary mb-3">New Appointment</p>
-            <h4 className="text-2xl font-serif italic text-slate-900">Create Clinical Booking</h4>
+            <h4 className="text-2xl font-serif italic text-slate-900">Create Crown & Bridge Booking</h4>
             <div className="mt-4 grid sm:grid-cols-2 gap-3">
               <input
                 type="text"

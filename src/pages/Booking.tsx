@@ -7,7 +7,7 @@ import { getHospitalHours } from '../lib/management-api';
 export default function Booking() {
   const [step, setStep] = useState(1);
   const [formData, setFormData] = useState({
-    treatmentType: 'Consultation',
+    treatmentType: 'Crown & Bridge Consultation',
     date: '',
     time: '',
     firstName: '',
@@ -195,10 +195,10 @@ export default function Booking() {
     <div className="min-h-screen py-10 sm:py-14 lg:py-20">
       <div className="max-w-6xl mx-auto px-4 sm:px-6">
         <div className="mb-10 sm:mb-14 text-center">
-          <h2 className="text-[10px] font-bold text-brand-muted uppercase tracking-[0.35em] mb-4">Patient Registry</h2>
-          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-serif italic text-brand-primary mb-4 tracking-tight">Clinical Booking</h1>
+          <h2 className="text-[10px] font-bold text-brand-muted uppercase tracking-[0.35em] mb-4">J rish Dental Surgery</h2>
+          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-serif italic text-brand-primary mb-4 tracking-tight">Crown & Bridge Booking</h1>
           <p className="text-brand-muted max-w-xl mx-auto text-base sm:text-lg">
-            Three-step booking flow designed for clarity on mobile and desktop.
+            Book a focused visit for crown, bridge, broken tooth, missing tooth, or bite comfort concerns.
           </p>
         </div>
 
@@ -228,9 +228,9 @@ export default function Booking() {
               >
                 <div className="grid lg:grid-cols-12 gap-8 lg:gap-10">
                   <div className="lg:col-span-4">
-                    <h3 className="text-2xl font-serif italic text-brand-primary mb-3">Treatment & Time</h3>
+                    <h3 className="text-2xl font-serif italic text-brand-primary mb-3">Visit Time</h3>
                     <p className="text-brand-muted text-sm leading-relaxed mb-5">
-                      Select your preferred consultation date and available time slot.
+                      Select your preferred consultation date and available time slot for Dr. Jiyath Hassan's team.
                     </p>
                     <div className="inline-flex items-center gap-2 rounded-full bg-brand-bg-soft border border-brand-border px-4 py-2 text-xs font-semibold text-brand-muted">
                       <Clock3 className="h-4 w-4 text-brand-accent" />
@@ -371,7 +371,7 @@ export default function Booking() {
                         </div>
                         <div>
                           <p className="text-[10px] font-bold text-brand-muted uppercase tracking-widest mb-1.5">Booking Type</p>
-                          <p className="text-xl sm:text-2xl font-serif italic text-brand-primary">Consultation</p>
+                          <p className="text-xl sm:text-2xl font-serif italic text-brand-primary">Crown & Bridge Consultation</p>
                         </div>
                       </div>
 

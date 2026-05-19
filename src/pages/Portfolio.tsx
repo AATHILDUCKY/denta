@@ -4,22 +4,22 @@ import { ChevronRight } from 'lucide-react';
 export default function Portfolio() {
   const cases = [
     {
-      title: 'Full Smile Restoration',
-      description: 'A complete transformation using porcelain veneers and advanced whitening techniques.',
-      category: 'Cosmetic',
+      title: 'Crown Restoration',
+      description: 'Protect a weakened or broken tooth with a natural-looking crown planned for comfort and strength.',
+      category: 'Tooth Protection',
       imageBefore: 'https://images.unsplash.com/photo-1588776814546-1ffcf47267a5?q=80&w=2574&auto=format&fit=crop',
       imageAfter: 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?q=80&w=2670&auto=format&fit=crop'
     },
     {
-      title: 'Invisalign Alignment',
-      description: 'Corrected severe crowding and bite issues in just 14 months without metal braces.',
-      category: 'Orthodontics',
+      title: 'Dental Bridge',
+      description: 'Replace a missing tooth space with a bridge that supports chewing and restores smile continuity.',
+      category: 'Missing Tooth Care',
       imageAfter: 'https://images.unsplash.com/photo-1593059080506-517a6936d370?q=80&w=2670&auto=format&fit=crop'
     },
     {
-      title: 'Dental Implant Success',
-      description: 'Restored function and aesthetics for a patient with missing molars.',
-      category: 'Surgery',
+      title: 'Bite & Smile Planning',
+      description: 'Review shade, shape, bite pressure, and gum support before starting crown or bridge treatment.',
+      category: 'Treatment Planning',
       imageAfter: 'https://images.unsplash.com/photo-1606811971618-4486d14f3f99?q=80&w=2574&auto=format&fit=crop'
     }
   ];
@@ -28,12 +28,12 @@ export default function Portfolio() {
     <div className="py-20 lg:py-32 bg-white min-h-screen">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="mb-20 max-w-3xl">
-          <h1 className="text-sm font-bold text-brand-primary uppercase tracking-[0.2em] mb-4">Our Work</h1>
+          <h1 className="text-sm font-bold text-brand-primary uppercase tracking-[0.2em] mb-4">Treatments</h1>
           <h2 className="text-5xl lg:text-7xl font-bold font-display leading-[0.95] tracking-tight text-brand-ink mb-8 italic">
-            Artistry in every <br/>single smile.
+            Crown and bridge <br/>care that feels natural.
           </h2>
           <p className="text-xl text-brand-muted leading-relaxed">
-            Discover how we blend medical expertise with aesthetic vision to create results that are as healthy as they are beautiful.
+            J rish Dental Surgery restores function and beauty with focused treatment plans for crowns, bridges, and long-term restoration care.
           </p>
         </div>
 

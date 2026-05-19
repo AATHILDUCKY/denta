@@ -36,8 +36,8 @@ export default function Login({ onLogin }: LoginProps) {
         <div className="bg-white/90 rounded-[2rem] border border-brand-border p-12 text-center shadow-xl shadow-brand-border/40">
           <div className="flex justify-center mb-10">
             <div className="flex flex-col">
-              <span className="text-4xl font-serif font-bold text-brand-primary leading-none tracking-tight">PDH</span>
-              <span className="text-[10px] uppercase tracking-[0.25em] text-brand-accent mt-2 font-bold">DentaCare Hospital</span>
+              <span className="text-4xl font-black text-brand-primary leading-none tracking-tight">J rish</span>
+              <span className="text-[10px] uppercase tracking-[0.25em] text-brand-accent mt-2 font-bold">Dental Surgery Kinniya</span>
             </div>
           </div>
 
