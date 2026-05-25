@@ -112,15 +112,16 @@ export default function Booking() {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim());
   }, [formData.email]);
 
-  const isStepOneValid = Boolean(formData.date && formData.time);
+  const isDateInPast = Boolean(formData.date && formData.date < new Date().toISOString().split('T')[0]);
+  const isStepOneValid = Boolean(formData.date && formData.time && !isDateInPast);
   const isStepTwoValid = Boolean(formData.firstName.trim() && formData.lastName.trim() && isPhoneValid && isEmailValid && formData.age && formData.gender);
 
   const nextStep = () => {
     setError('');
 
-    if (step === 1 && !isStepOneValid) {
-      setError('Please select date and time before continuing.');
-      return;
+    if (step === 1) {
+      if (isDateInPast) { setError('Cannot book an appointment for a past date.'); return; }
+      if (!isStepOneValid) { setError('Please select date and time before continuing.'); return; }
     }
 
     if (step === 2) {

@@ -412,6 +412,8 @@ async function startServer() {
     if (!appointment.phone) return "Phone number is required.";
     if (!appointment.treatmentType) return "Treatment type is required.";
     if (!isValidDate(appointment.date)) return "Date must be in YYYY-MM-DD format.";
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    if (new Date(appointment.date) < today) return "Appointments cannot be booked for past dates.";
     if (!isValidTime(appointment.time)) return "Time must be in HH:MM format.";
     if (!isFifteenMinuteSlot(appointment.time)) return "Appointments must be scheduled on 15-minute slot boundaries.";
     if (!allowedStatuses.includes(appointment.status)) return "Invalid status value.";
@@ -1119,7 +1121,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/appointments/:id/payment", requireAdminAuth, async (req, res) => {
+  app.post("/api/appointments/:id/payment", requireAuth, async (req, res) => {
     const { amount, amountPaid, status, method, notes } = req.body as Record<string, string>;
     const validStatuses = ["pending", "partial", "paid", "waived"];
     if (status && !validStatuses.includes(status)) {
@@ -1521,7 +1523,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/settings/treatment-types", requireAdminAuth, async (_req, res) => {
+  app.get("/api/settings/treatment-types", requireAuth, async (_req, res) => {
     try {
       const types = await getTreatmentTypes();
       res.json({ success: true, data: types });
@@ -1530,7 +1532,7 @@ async function startServer() {
     }
   });
 
-  app.put("/api/settings/treatment-types", requireAdminAuth, async (req, res) => {
+  app.put("/api/settings/treatment-types", requireAuth, async (req, res) => {
     const types = req.body.types;
     if (!Array.isArray(types) || types.some((t: unknown) => typeof t !== "string")) {
       return res.status(400).json({ success: false, message: "types must be an array of strings." });
