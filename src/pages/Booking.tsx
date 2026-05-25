@@ -81,6 +81,17 @@ export default function Booking() {
     loadHours();
   }, []);
 
+  const pastTimeSlots = useMemo(() => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (formData.date !== todayStr) return new Set<string>();
+    const now = new Date();
+    const currentMins = now.getHours() * 60 + now.getMinutes();
+    const past = new Set<string>();
+    const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+    timeSlots.forEach((t) => { if (toMins(t) <= currentMins) past.add(t); });
+    return past;
+  }, [formData.date, timeSlots]);
+
   const bookedSlots = useMemo(() => {
     if (!formData.date) return new Set<string>();
 
@@ -267,15 +278,17 @@ export default function Booking() {
                       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                         {timeSlots.map((time) => {
                           const isBooked = bookedSlots.has(time);
+                          const isPast = pastTimeSlots.has(time);
+                          const isDisabled = isBooked || isPast;
                           return (
                             <button
                               key={time}
-                              disabled={isBooked}
+                              disabled={isDisabled}
                               onClick={() => setFormData({ ...formData, time })}
                               className={`h-12 rounded-xl border text-xs font-bold uppercase tracking-[0.12em] transition-all duration-200 ${
                                 formData.time === time
                                   ? 'bg-gradient-to-r from-brand-primary to-brand-secondary text-white border-brand-primary shadow-md shadow-brand-border/60'
-                                  : isBooked
+                                  : isDisabled
                                     ? 'bg-rose-50 border-rose-200 text-rose-400 cursor-not-allowed opacity-70'
                                     : 'bg-white border-brand-border text-brand-ink hover:border-brand-primary hover:text-brand-primary'
                               }`}
