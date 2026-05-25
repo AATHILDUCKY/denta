@@ -37,7 +37,7 @@ async function startServer() {
     uid: string;
     email: string;
     displayName: string;
-    role: "admin";
+    role: "admin" | "staff";
     createdAt: string;
   }
 
@@ -47,6 +47,9 @@ async function startServer() {
     lastName: string;
     email: string;
     phone: string;
+    nic?: string;
+    age?: number;
+    gender?: string;
     treatmentType: string;
     date: string;
     time: string;
@@ -236,7 +239,7 @@ async function startServer() {
     try {
       const parsed = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as { payload: AuthUser; exp: number };
       if (!parsed.exp || parsed.exp < Date.now()) return null;
-      if (parsed.payload.role !== "admin") return null;
+      if (parsed.payload.role !== "admin" && parsed.payload.role !== "staff") return null;
       return parsed.payload;
     } catch {
       return null;
@@ -251,6 +254,35 @@ async function startServer() {
     next();
   }
 
+  function requireAdminAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+    const user = getAuthUser(req);
+    if (!user || user.role !== "admin") {
+      return res.status(403).json({ success: false, message: "Admin access required." });
+    }
+    next();
+  }
+
+  async function hashPassword(password: string): Promise<string> {
+    const salt = crypto.randomBytes(16).toString("hex");
+    return new Promise((resolve, reject) => {
+      crypto.scrypt(password, salt, 64, (err, hash) => {
+        if (err) reject(err);
+        else resolve(`${salt}:${hash.toString("hex")}`);
+      });
+    });
+  }
+
+  async function verifyPassword(password: string, stored: string): Promise<boolean> {
+    const [salt, hash] = stored.split(":");
+    if (!salt || !hash) return false;
+    return new Promise((resolve, reject) => {
+      crypto.scrypt(password, salt, 64, (err, derivedHash) => {
+        if (err) reject(err);
+        else resolve(crypto.timingSafeEqual(Buffer.from(hash, "hex"), derivedHash));
+      });
+    });
+  }
+
   app.post("/api/auth/login", async (req, res) => {
     const username = String(req.body?.username || "").trim();
     const password = String(req.body?.password || "");
@@ -261,26 +293,47 @@ async function startServer() {
     const validPass =
       password.length === ADMIN_PASSWORD.length &&
       crypto.timingSafeEqual(Buffer.from(password), Buffer.from(ADMIN_PASSWORD));
-    if (!validUser || !validPass) {
-      return res.status(401).json({ success: false, message: "Invalid username or password." });
+    if (validUser && validPass) {
+      const user: AuthUser = {
+        uid: "admin",
+        email: `${ADMIN_USERNAME}@dentacare.pro`,
+        displayName: "Clinic Admin",
+        role: "admin",
+        createdAt: new Date().toISOString(),
+      };
+      const token = signToken(user);
+      res.cookie(SESSION_COOKIE, token, {
+        httpOnly: true,
+        secure: COOKIE_SECURE,
+        sameSite: "strict",
+        maxAge: SESSION_MAX_AGE_MS,
+        path: "/",
+      });
+      return res.json({ success: true, data: user });
     }
 
-    const user: AuthUser = {
-      uid: "admin",
-      email: `${ADMIN_USERNAME}@dentacare.pro`,
-      displayName: "Clinic Admin",
-      role: "admin",
-      createdAt: new Date().toISOString(),
-    };
-    const token = signToken(user);
-    res.cookie(SESSION_COOKIE, token, {
-      httpOnly: true,
-      secure: COOKIE_SECURE,
-      sameSite: "strict",
-      maxAge: SESSION_MAX_AGE_MS,
-      path: "/",
-    });
-    return res.json({ success: true, data: user });
+    // Check staff/doctor DB credentials
+    const rows = await prisma.$queryRawUnsafe<Array<{ id: string; email: string; displayName: string; role: string; passwordHash: string | null; createdAt: Date }>>(
+      `SELECT "id", "email", "displayName", "role", "passwordHash", "createdAt" FROM "User" WHERE "username" = ? AND "passwordHash" IS NOT NULL LIMIT 1`,
+      username
+    );
+    const staffRow = rows[0];
+    if (staffRow && staffRow.passwordHash) {
+      const valid = await verifyPassword(password, staffRow.passwordHash);
+      if (valid) {
+        const staffUser: AuthUser = {
+          uid: staffRow.id,
+          email: staffRow.email,
+          displayName: staffRow.displayName,
+          role: staffRow.role as AuthUser["role"],
+          createdAt: staffRow.createdAt instanceof Date ? staffRow.createdAt.toISOString() : String(staffRow.createdAt),
+        };
+        const token = signToken(staffUser);
+        res.cookie(SESSION_COOKIE, token, { httpOnly: true, secure: COOKIE_SECURE, sameSite: "strict", maxAge: SESSION_MAX_AGE_MS, path: "/" });
+        return res.json({ success: true, data: staffUser });
+      }
+    }
+    return res.status(401).json({ success: false, message: "Invalid username or password." });
   });
 
   app.post("/api/auth/logout", (_req, res) => {
@@ -340,6 +393,9 @@ async function startServer() {
       lastName: input.lastName.trim(),
       email: input.email.trim().toLowerCase(),
       phone: input.phone.trim(),
+      nic: input.nic?.trim() || null,
+      age: input.age != null ? Number(input.age) : null,
+      gender: input.gender?.trim() || null,
       treatmentType: input.treatmentType.trim(),
       date: input.date.trim(),
       time: input.time.trim(),
@@ -352,7 +408,7 @@ async function startServer() {
   function validateAppointmentInput(input: AppointmentPayload) {
     const appointment = normalize(input);
     if (!appointment.firstName || !appointment.lastName) return "First name and last name are required.";
-    if (!appointment.email.includes("@")) return "A valid email is required.";
+    if (appointment.email && !appointment.email.includes("@")) return "Invalid email format.";
     if (!appointment.phone) return "Phone number is required.";
     if (!appointment.treatmentType) return "Treatment type is required.";
     if (!isValidDate(appointment.date)) return "Date must be in YYYY-MM-DD format.";
@@ -387,6 +443,10 @@ async function startServer() {
     if (!hasNotificationRulesJson) {
       await prisma.$executeRawUnsafe(`ALTER TABLE "ClinicSettings" ADD COLUMN "notificationRulesJson" TEXT`);
     }
+    const hasTreatmentTypesJson = columns.some((column) => column.name === "treatmentTypesJson");
+    if (!hasTreatmentTypesJson) {
+      await prisma.$executeRawUnsafe(`ALTER TABLE "ClinicSettings" ADD COLUMN "treatmentTypesJson" TEXT`);
+    }
     await prisma.$executeRawUnsafe(`
       INSERT INTO "ClinicSettings" ("id", "openTime", "closeTime")
       SELECT 1, '08:00', '18:00'
@@ -407,6 +467,15 @@ async function startServer() {
       SET "notificationRulesJson" = '{"sendToPatientOnBooking":true,"sendToPatientOnConfirmed":true,"sendToPatientOnReschedule":true,"sendToTeamOnBooking":true,"sendToTeamOnConfirmed":true,"sendToTeamOnReschedule":true}'
       WHERE "id" = 1 AND ("notificationRulesJson" IS NULL OR "notificationRulesJson" = '')
     `);
+    await prisma.$executeRawUnsafe(
+      `UPDATE "ClinicSettings" SET "treatmentTypesJson" = ? WHERE "id" = 1 AND ("treatmentTypesJson" IS NULL OR "treatmentTypesJson" = '')`,
+      JSON.stringify([
+        "Consultation", "Dental Cleaning / Scaling", "Tooth Extraction", "Root Canal Treatment",
+        "Crown Placement", "Composite Filling", "Amalgam Filling", "Dental Implant", "Teeth Whitening",
+        "Orthodontic Consultation", "Dentures", "Bridge", "Veneer", "Periodontal Treatment",
+        "Fluoride Treatment", "Dental X-Ray", "Cavity Check-up", "Wisdom Tooth Removal",
+      ])
+    );
   }
 
   async function ensureHistoryEventsTable() {
@@ -515,6 +584,17 @@ async function startServer() {
     };
   }
 
+  async function getTreatmentTypes(): Promise<string[]> {
+    const rows = await prisma.$queryRawUnsafe<Array<{ treatmentTypesJson: string | null }>>(
+      `SELECT "treatmentTypesJson" FROM "ClinicSettings" WHERE "id" = 1 LIMIT 1`
+    );
+    try {
+      return JSON.parse(rows[0]?.treatmentTypesJson || "[]") as string[];
+    } catch {
+      return [];
+    }
+  }
+
   async function sendTeamNotificationEmail(input: {
     recipients: string[];
     eventName: "booking" | "confirmed" | "rescheduled";
@@ -607,9 +687,16 @@ async function startServer() {
   app.get("/api/appointments", requireAuth, async (_req, res) => {
     try {
       const data = await prisma.appointment.findMany({
-        orderBy: [{ date: "asc" }, { time: "asc" }],
+        orderBy: [{ createdAt: "desc" }],
+        include: { treatment: true, payment: true },
       });
-      res.json({ success: true, data });
+      // Merge nic/age/gender from raw columns (not in Prisma schema)
+      const extras = await prisma.$queryRawUnsafe<Array<{ id: string; nic: string | null; age: number | null; gender: string | null }>>(
+        `SELECT "id", "nic", "age", "gender" FROM "Appointment"`
+      );
+      const extrasMap = new Map(extras.map((e) => [e.id, e]));
+      const enriched = data.map((a) => ({ ...a, ...extrasMap.get(a.id) }));
+      res.json({ success: true, data: enriched });
     } catch (error) {
       res.status(500).json({ success: false, message: "Failed to load appointments." });
     }
@@ -660,28 +747,81 @@ async function startServer() {
 
       const normalizedEmail = appointment.email.trim().toLowerCase();
       const normalizedPhone = normalizePhone(appointment.phone);
-      const matchedPatient = await prisma.patient.findFirst({
-        where: {
-          OR: [
-            { email: normalizedEmail },
-            { phone: normalizedPhone },
-          ],
-        },
-      });
+      const actorRole = getAuthUser(req)?.role || "public";
+      const source = getAuthUser(req) ? "dashboard" : "booking";
 
+      // Identify patient by email first (only if email provided), then by NIC
+      const hasEmail = Boolean(normalizedEmail);
+      let linkedPatient = hasEmail
+        ? await prisma.patient.findFirst({ where: { email: normalizedEmail } })
+        : null;
+
+      if (!linkedPatient && appointment.nic?.trim()) {
+        const byNic = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+          `SELECT "id" FROM "Patient" WHERE "nic" = ? LIMIT 1`,
+          appointment.nic.trim()
+        );
+        if (byNic.length > 0) {
+          linkedPatient = await prisma.patient.findUnique({ where: { id: byNic[0].id } });
+        }
+      }
+
+      if (linkedPatient) {
+        // Known patient — refresh their last-visit date
+        await prisma.patient.update({
+          where: { id: linkedPatient.id },
+          data: { lastVisit: appointment.date },
+        });
+      } else {
+        // New patient — auto-register from appointment data
+        // If no email provided, use a phone-based placeholder to satisfy the @unique constraint
+        const patientEmail = normalizedEmail || `noemail_${normalizedPhone}@noemail.local`;
+        linkedPatient = await prisma.patient.create({
+          data: {
+            firstName: appointment.firstName,
+            lastName: appointment.lastName,
+            email: patientEmail,
+            phone: normalizedPhone,
+            lastVisit: appointment.date,
+          },
+        });
+        if (appointment.nic !== null || appointment.age !== null || appointment.gender !== null) {
+          await prisma.$executeRawUnsafe(
+            `UPDATE "Patient" SET "nic" = ?, "age" = ?, "gender" = ? WHERE "id" = ?`,
+            appointment.nic ?? null, appointment.age ?? null, appointment.gender ?? null, linkedPatient.id
+          );
+        }
+        await logHistoryEvent({
+          eventType: "patient_registered",
+          actorRole,
+          source,
+          patientId: linkedPatient.id,
+          email: linkedPatient.email,
+          phone: linkedPatient.phone,
+          payload: { firstName: linkedPatient.firstName, lastName: linkedPatient.lastName, autoCreated: true },
+        });
+      }
+
+      const { nic, age, gender, ...aptData } = appointment;
       const created = await prisma.appointment.create({
         data: {
-          ...appointment,
+          ...aptData,
           email: normalizedEmail,
           phone: normalizedPhone,
-          patientId: matchedPatient?.id,
+          patientId: linkedPatient.id,
         },
       });
+      if (nic !== undefined || age !== undefined || gender !== undefined) {
+        await prisma.$executeRawUnsafe(
+          `UPDATE "Appointment" SET "nic" = ?, "age" = ?, "gender" = ? WHERE "id" = ?`,
+          nic ?? null, age ?? null, gender ?? null, created.id
+        );
+      }
 
       await logHistoryEvent({
         eventType: "appointment_created",
-        actorRole: getAuthUser(req)?.role || "public",
-        source: getAuthUser(req) ? "dashboard" : "booking",
+        actorRole,
+        source,
         patientId: created.patientId,
         email: created.email,
         phone: created.phone,
@@ -732,7 +872,7 @@ async function startServer() {
     }
   });
 
-  app.patch("/api/appointments/:id", requireAuth, async (req, res) => {
+  app.patch("/api/appointments/:id", requireAdminAuth, async (req, res) => {
     const { id } = req.params;
     const body = req.body as Partial<AppointmentPayload>;
     const date = String(body.date || "").trim();
@@ -832,7 +972,7 @@ async function startServer() {
     }
   });
 
-  app.patch("/api/appointments/:id/status", requireAuth, async (req, res) => {
+  app.patch("/api/appointments/:id/status", requireAdminAuth, async (req, res) => {
     const { id } = req.params;
     const status = String(req.body.status || "") as AppointmentStatus;
     if (!allowedStatuses.includes(status)) {
@@ -894,7 +1034,7 @@ async function startServer() {
     }
   });
 
-  app.delete("/api/appointments/:id", requireAuth, async (req, res) => {
+  app.delete("/api/appointments/:id", requireAdminAuth, async (req, res) => {
     const { id } = req.params;
     try {
       const existing = await prisma.appointment.findUnique({ where: { id } });
@@ -922,19 +1062,234 @@ async function startServer() {
     }
   });
 
-  app.get("/api/staff", requireAuth, async (_req, res) => {
+  // ── Treatment records ────────────────────────────────────────────────────────
+
+  app.get("/api/appointments/:id/treatment", requireAuth, async (req, res) => {
     try {
-      const data = await prisma.user.findMany({
-        where: { role: { in: [UserRole.admin, UserRole.staff] } },
-        orderBy: { createdAt: "desc" },
+      const record = await prisma.treatmentRecord.findUnique({
+        where: { appointmentId: req.params.id },
       });
+      res.json({ success: true, data: record });
+    } catch {
+      res.status(500).json({ success: false, message: "Failed to load treatment." });
+    }
+  });
+
+  app.post("/api/appointments/:id/treatment", requireAuth, async (req, res) => {
+    const { treatmentName, teethNumbers, notes, cost } = req.body as Record<string, string>;
+    if (!treatmentName?.trim()) {
+      return res.status(400).json({ success: false, message: "Treatment name is required." });
+    }
+    try {
+      const appointment = await prisma.appointment.findUnique({ where: { id: req.params.id } });
+      if (!appointment) return res.status(404).json({ success: false, message: "Appointment not found." });
+      const record = await prisma.treatmentRecord.upsert({
+        where: { appointmentId: req.params.id },
+        update: {
+          treatmentName: treatmentName.trim(),
+          teethNumbers: teethNumbers?.trim() || null,
+          notes: notes?.trim() || null,
+          cost: Math.max(0, Number(cost) || 0),
+        },
+        create: {
+          appointmentId: req.params.id,
+          patientId: appointment.patientId,
+          treatmentName: treatmentName.trim(),
+          teethNumbers: teethNumbers?.trim() || null,
+          notes: notes?.trim() || null,
+          cost: Math.max(0, Number(cost) || 0),
+        },
+      });
+      res.json({ success: true, data: record });
+    } catch {
+      res.status(500).json({ success: false, message: "Failed to save treatment." });
+    }
+  });
+
+  // ── Payments ─────────────────────────────────────────────────────────────────
+
+  app.get("/api/appointments/:id/payment", requireAuth, async (req, res) => {
+    try {
+      const record = await prisma.payment.findUnique({
+        where: { appointmentId: req.params.id },
+      });
+      res.json({ success: true, data: record });
+    } catch {
+      res.status(500).json({ success: false, message: "Failed to load payment." });
+    }
+  });
+
+  app.post("/api/appointments/:id/payment", requireAdminAuth, async (req, res) => {
+    const { amount, amountPaid, status, method, notes } = req.body as Record<string, string>;
+    const validStatuses = ["pending", "partial", "paid", "waived"];
+    if (status && !validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, message: "Invalid payment status." });
+    }
+    try {
+      const appointment = await prisma.appointment.findUnique({ where: { id: req.params.id } });
+      if (!appointment) return res.status(404).json({ success: false, message: "Appointment not found." });
+      const parsedAmount = Math.max(0, Number(amount) || 0);
+      const parsedPaid = Math.max(0, Number(amountPaid) || 0);
+      const resolvedStatus = (status as "pending" | "partial" | "paid" | "waived") || "pending";
+      const record = await prisma.payment.upsert({
+        where: { appointmentId: req.params.id },
+        update: {
+          amount: parsedAmount,
+          amountPaid: parsedPaid,
+          status: resolvedStatus,
+          method: method?.trim() || null,
+          notes: notes?.trim() || null,
+          paidAt: resolvedStatus === "paid" ? new Date() : null,
+        },
+        create: {
+          appointmentId: req.params.id,
+          amount: parsedAmount,
+          amountPaid: parsedPaid,
+          status: resolvedStatus,
+          method: method?.trim() || null,
+          notes: notes?.trim() || null,
+          paidAt: resolvedStatus === "paid" ? new Date() : null,
+        },
+      });
+      res.json({ success: true, data: record });
+    } catch {
+      res.status(500).json({ success: false, message: "Failed to save payment." });
+    }
+  });
+
+  // ── Overview stats ────────────────────────────────────────────────────────────
+
+  app.get("/api/stats/overview", requireAdminAuth, async (_req, res) => {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const last7Days = Array.from({ length: 7 }, (_, i) => {
+        const d = new Date();
+        d.setDate(d.getDate() - (6 - i));
+        return d.toISOString().slice(0, 10);
+      });
+      const [todayCount, pendingCount, pendingPayments, totalPatients, weeklyRaw] = await Promise.all([
+        prisma.appointment.count({ where: { date: today, status: { not: "cancelled" } } }),
+        prisma.appointment.count({ where: { status: "pending" } }),
+        prisma.payment.count({ where: { status: { in: ["pending", "partial"] } } }),
+        prisma.patient.count(),
+        prisma.appointment.groupBy({
+          by: ["date"],
+          where: { date: { in: last7Days }, status: { not: "cancelled" } },
+          _count: { id: true },
+        }),
+      ]);
+      const weeklyChart = last7Days.map((date) => {
+        const found = weeklyRaw.find((w) => w.date === date);
+        const dayName = new Date(date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" });
+        return { name: dayName, count: found?._count.id || 0 };
+      });
+      res.json({ success: true, data: { todayCount, pendingCount, pendingPayments, totalPatients, weeklyChart } });
+    } catch {
+      res.status(500).json({ success: false, message: "Failed to load stats." });
+    }
+  });
+
+  app.get("/api/staff", requireAdminAuth, async (_req, res) => {
+    try {
+      const rows = await prisma.$queryRawUnsafe<Array<{ id: string; email: string; displayName: string; role: string; createdAt: Date; username: string | null }>>(
+        `SELECT "id", "email", "displayName", "role", "createdAt", "username" FROM "User" WHERE "role" IN ('admin', 'staff') ORDER BY "createdAt" ASC`
+      );
+      const data = rows.map((r) => ({
+        id: r.id,
+        email: r.email,
+        displayName: r.displayName,
+        role: r.role,
+        createdAt: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt),
+        username: r.username ?? null,
+        canLogin: !!r.username,
+      }));
       res.json({ success: true, data });
     } catch (_error) {
       res.status(500).json({ success: false, message: "Failed to load staff." });
     }
   });
 
-  app.get("/api/patients", requireAuth, async (_req, res) => {
+  app.post("/api/staff", requireAdminAuth, async (req, res) => {
+    const { displayName, email, username, password, role } = req.body as Record<string, string>;
+    if (!displayName || !email || !username || !password) {
+      return res.status(400).json({ success: false, message: "Display name, email, username and password are required." });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ success: false, message: "Password must be at least 6 characters." });
+    }
+    try {
+      const existing = await prisma.$queryRawUnsafe<Array<{ id: string }>>(
+        `SELECT "id" FROM "User" WHERE "username" = ? OR "email" = ? LIMIT 1`,
+        username.trim(),
+        email.trim().toLowerCase()
+      );
+      if (existing.length > 0) {
+        return res.status(409).json({ success: false, message: "Username or email already exists." });
+      }
+      const hash = await hashPassword(password);
+      const user = await prisma.user.create({
+        data: {
+          email: email.trim().toLowerCase(),
+          displayName: displayName.trim(),
+          role: (role === "admin" ? "admin" : "staff") as UserRole,
+        },
+      });
+      await prisma.$executeRawUnsafe(
+        `UPDATE "User" SET "username" = ?, "passwordHash" = ? WHERE "id" = ?`,
+        username.trim(),
+        hash,
+        user.id
+      );
+      return res.status(201).json({
+        success: true,
+        data: { id: user.id, email: user.email, displayName: user.displayName, role: user.role, username: username.trim() },
+      });
+    } catch {
+      return res.status(500).json({ success: false, message: "Failed to create staff member." });
+    }
+  });
+
+  app.delete("/api/staff/:id", requireAdminAuth, async (req, res) => {
+    const { id } = req.params;
+    try {
+      await prisma.user.delete({ where: { id } });
+      return res.json({ success: true });
+    } catch {
+      return res.status(500).json({ success: false, message: "Failed to delete staff member." });
+    }
+  });
+
+  app.patch("/api/staff/:id", requireAdminAuth, async (req, res) => {
+    const { id } = req.params;
+    const { displayName, email, username, password, role } = req.body as Record<string, string>;
+    if (!id) return res.status(400).json({ success: false, message: "Staff id is required." });
+    try {
+      const updateData: Record<string, unknown> = {};
+      if (displayName?.trim()) updateData.displayName = displayName.trim();
+      if (email?.trim()) updateData.email = email.trim().toLowerCase();
+      if (role && ["admin", "staff"].includes(role)) updateData.role = role as UserRole;
+      if (Object.keys(updateData).length > 0) {
+        await prisma.user.update({ where: { id }, data: updateData as Parameters<typeof prisma.user.update>[0]["data"] });
+      }
+      if (username?.trim()) {
+        await prisma.$executeRawUnsafe(`UPDATE "User" SET "username" = ? WHERE "id" = ?`, username.trim(), id);
+      }
+      if (password && password.length >= 6) {
+        const hash = await hashPassword(password);
+        await prisma.$executeRawUnsafe(`UPDATE "User" SET "passwordHash" = ? WHERE "id" = ?`, hash, id);
+      }
+      const rows = await prisma.$queryRawUnsafe<Array<{ id: string; email: string; displayName: string; role: string; createdAt: string; username: string | null; passwordHash: string | null }>>(
+        `SELECT "id","email","displayName","role","createdAt","username","passwordHash" FROM "User" WHERE "id" = ? LIMIT 1`, id
+      );
+      if (!rows[0]) return res.status(404).json({ success: false, message: "Staff not found." });
+      const u = rows[0];
+      return res.json({ success: true, data: { id: u.id, email: u.email, displayName: u.displayName, role: u.role, createdAt: u.createdAt, username: u.username ?? null, canLogin: Boolean(u.username && u.passwordHash) } });
+    } catch {
+      return res.status(500).json({ success: false, message: "Failed to update staff member." });
+    }
+  });
+
+  app.get("/api/patients", requireAdminAuth, async (_req, res) => {
     try {
       const data = await prisma.patient.findMany({
         orderBy: { lastName: "asc" },
@@ -945,11 +1300,11 @@ async function startServer() {
     }
   });
 
-  app.get("/api/history/patients", requireAuth, async (_req, res) => {
+  app.get("/api/history/patients", requireAdminAuth, async (_req, res) => {
     try {
       const [patients, appointments, events] = await Promise.all([
         prisma.patient.findMany({
-          orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+          orderBy: { createdAt: "desc" },
         }),
         prisma.appointment.findMany({
           orderBy: [{ date: "desc" }, { time: "desc" }],
@@ -969,12 +1324,13 @@ async function startServer() {
       ]);
 
       const patientById = new Map(patients.map((patient) => [patient.id, patient]));
+      // email alias → name key (secondary lookup only)
       const aliasToKey = new Map<string, string>();
       const bucketByKey = new Map<string, {
         id: string;
         firstName: string;
         lastName: string;
-        email: string;
+        email: string | null;
         phone: string;
         dateOfBirth?: string | null;
         medicalHistory?: string | null;
@@ -988,11 +1344,14 @@ async function startServer() {
         emailSet: Set<string>;
       }>();
 
+      const nameKey = (first: string, last: string) =>
+        `n:${first.trim().toLowerCase()}_${last.trim().toLowerCase()}`;
+
       const ensureBucket = (key: string, seed: {
         id: string;
         firstName: string;
         lastName: string;
-        email: string;
+        email: string | null;
         phone: string;
         dateOfBirth?: string | null;
         medicalHistory?: string | null;
@@ -1019,48 +1378,62 @@ async function startServer() {
         return created;
       };
 
+      // Bucket registered patients by name (primary key)
       patients.forEach((patient) => {
-        const normalizedEmail = patient.email.trim().toLowerCase();
-        ensureBucket(`e:${normalizedEmail}`, {
-          ...patient,
-          isRegisteredPatient: true,
-        });
+        const key = nameKey(patient.firstName, patient.lastName);
+        ensureBucket(key, { ...patient, createdAt: patient.createdAt.toISOString(), isRegisteredPatient: true });
       });
 
+      // Bucket appointments: resolve by patientId name → email alias → name fallback
       appointments.forEach((appointment) => {
-        const emailAlias = `e:${appointment.email.trim().toLowerCase()}`;
-        const pidEmail = appointment.patientId ? patientById.get(appointment.patientId)?.email?.trim().toLowerCase() : "";
-        const pidKey = pidEmail ? `e:${pidEmail}` : "";
-        const resolvedKey =
-          (pidKey && bucketByKey.has(pidKey) ? pidKey : "") ||
-          aliasToKey.get(emailAlias) ||
-          emailAlias ||
-          `lead:n:${appointment.firstName.toLowerCase()}_${appointment.lastName.toLowerCase()}`;
+        const linkedPatient = appointment.patientId ? patientById.get(appointment.patientId) : null;
+        const apptNameKey = nameKey(appointment.firstName, appointment.lastName);
 
-        const patient = appointment.patientId ? patientById.get(appointment.patientId) : null;
+        let resolvedKey: string;
+        if (linkedPatient) {
+          // Prefer the registered patient's canonical name key
+          const pidNameKey = nameKey(linkedPatient.firstName, linkedPatient.lastName);
+          resolvedKey = bucketByKey.has(pidNameKey) ? pidNameKey : apptNameKey;
+        } else if (appointment.email) {
+          // Fall back to email alias if one exists from a registered patient
+          resolvedKey = aliasToKey.get(`e:${appointment.email.trim().toLowerCase()}`) ?? apptNameKey;
+        } else {
+          resolvedKey = apptNameKey;
+        }
+
         const bucket = ensureBucket(resolvedKey, {
-          id: patient?.id || `lead-${appointment.id}`,
-          firstName: patient?.firstName || appointment.firstName,
-          lastName: patient?.lastName || appointment.lastName,
-          email: patient?.email || appointment.email,
-          phone: patient?.phone || appointment.phone,
-          dateOfBirth: patient?.dateOfBirth || null,
-          medicalHistory: patient?.medicalHistory || null,
-          createdAt: patient?.createdAt?.toISOString?.() || appointment.createdAt.toISOString(),
-          lastVisit: patient?.lastVisit || null,
-          isRegisteredPatient: Boolean(patient),
+          id: linkedPatient?.id || `lead-${appointment.id}`,
+          firstName: linkedPatient?.firstName || appointment.firstName,
+          lastName: linkedPatient?.lastName || appointment.lastName,
+          email: linkedPatient?.email || appointment.email || null,
+          phone: linkedPatient?.phone || appointment.phone,
+          dateOfBirth: linkedPatient?.dateOfBirth || null,
+          medicalHistory: linkedPatient?.medicalHistory || null,
+          createdAt: linkedPatient?.createdAt?.toISOString?.() || appointment.createdAt.toISOString(),
+          lastVisit: linkedPatient?.lastVisit || null,
+          isRegisteredPatient: Boolean(linkedPatient),
         });
-        bucket.emailSet.add(appointment.email.trim().toLowerCase());
+        if (appointment.email) {
+          const emailNorm = appointment.email.trim().toLowerCase();
+          bucket.emailSet.add(emailNorm);
+          aliasToKey.set(`e:${emailNorm}`, resolvedKey);
+        }
         bucket.appointments.push(appointment);
       });
 
+      // Attach events: resolve by patientId name key, then email alias
       events.forEach((event) => {
-        const emailAlias = `e:${String(event.email || "").trim().toLowerCase()}`;
-        const pidEmail = event.patientId ? patientById.get(event.patientId)?.email?.trim().toLowerCase() : "";
-        const pidKey = pidEmail ? `e:${pidEmail}` : "";
-        const resolvedKey =
-          (pidKey && bucketByKey.has(pidKey) ? pidKey : "") ||
-          aliasToKey.get(emailAlias);
+        let resolvedKey: string | undefined;
+        if (event.patientId) {
+          const linkedPatient = patientById.get(event.patientId);
+          if (linkedPatient) {
+            const pidNameKey = nameKey(linkedPatient.firstName, linkedPatient.lastName);
+            resolvedKey = bucketByKey.has(pidNameKey) ? pidNameKey : undefined;
+          }
+        }
+        if (!resolvedKey && event.email) {
+          resolvedKey = aliasToKey.get(`e:${String(event.email).trim().toLowerCase()}`);
+        }
         if (!resolvedKey) return;
         const bucket = bucketByKey.get(resolvedKey);
         if (!bucket) return;
@@ -1082,15 +1455,11 @@ async function startServer() {
             lastAppointmentAt: latest ? `${latest.date} ${latest.time}` : null,
             appointments: history,
             events: [...bucket.events].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))),
-            alternateEmails: Array.from(bucket.emailSet).filter((item) => item !== bucket.email.trim().toLowerCase()),
+            alternateEmails: Array.from(bucket.emailSet).filter((item) => !bucket.email || item !== bucket.email.trim().toLowerCase()),
             emailChangedLikely: Array.from(bucket.emailSet).length > 1,
           };
         })
-        .sort((a, b) => {
-          const aTime = a.lastAppointmentAt || "";
-          const bTime = b.lastAppointmentAt || "";
-          return bTime.localeCompare(aTime) || `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`);
-        });
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
       res.json({ success: true, data });
     } catch {
@@ -1098,7 +1467,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/settings/hours", requireAuth, async (_req, res) => {
+  app.get("/api/settings/hours", requireAdminAuth, async (_req, res) => {
     try {
       const settings = await getHospitalHours();
       res.json({ success: true, data: settings });
@@ -1107,7 +1476,7 @@ async function startServer() {
     }
   });
 
-  app.get("/api/settings/notifications", requireAuth, async (_req, res) => {
+  app.get("/api/settings/notifications", requireAdminAuth, async (_req, res) => {
     try {
       const settings = await getNotificationSettings();
       res.json({ success: true, data: settings });
@@ -1116,7 +1485,7 @@ async function startServer() {
     }
   });
 
-  app.patch("/api/settings/notifications", requireAuth, async (req, res) => {
+  app.patch("/api/settings/notifications", requireAdminAuth, async (req, res) => {
     try {
       const body = req.body as Partial<NotificationSettings>;
       const current = await getNotificationSettings();
@@ -1152,7 +1521,33 @@ async function startServer() {
     }
   });
 
-  app.patch("/api/settings/hours", requireAuth, async (req, res) => {
+  app.get("/api/settings/treatment-types", requireAdminAuth, async (_req, res) => {
+    try {
+      const types = await getTreatmentTypes();
+      res.json({ success: true, data: types });
+    } catch {
+      res.status(500).json({ success: false, message: "Failed to load treatment types." });
+    }
+  });
+
+  app.put("/api/settings/treatment-types", requireAdminAuth, async (req, res) => {
+    const types = req.body.types;
+    if (!Array.isArray(types) || types.some((t: unknown) => typeof t !== "string")) {
+      return res.status(400).json({ success: false, message: "types must be an array of strings." });
+    }
+    const cleaned = (types as string[]).map((t) => t.trim()).filter(Boolean);
+    try {
+      await prisma.$executeRawUnsafe(
+        `UPDATE "ClinicSettings" SET "treatmentTypesJson" = ? WHERE "id" = 1`,
+        JSON.stringify(cleaned)
+      );
+      res.json({ success: true, data: cleaned });
+    } catch {
+      res.status(500).json({ success: false, message: "Failed to save treatment types." });
+    }
+  });
+
+  app.patch("/api/settings/hours", requireAdminAuth, async (req, res) => {
     const ranges = (req.body.ranges || []) as HourRange[];
 
     if (!isValidRanges(ranges)) {
@@ -1173,11 +1568,12 @@ async function startServer() {
     }
   });
 
-  app.post("/api/patients", requireAuth, async (req, res) => {
-    const { firstName, lastName, email, phone, dateOfBirth, medicalHistory } = req.body as Record<string, string>;
+  app.post("/api/patients", requireAdminAuth, async (req, res) => {
+    const { firstName, lastName, email, phone, nic, age, gender, dateOfBirth, medicalHistory } = req.body as Record<string, string>;
     if (!firstName || !lastName || !email || !phone) {
       return res.status(400).json({ success: false, message: "First name, last name, email and phone are required." });
     }
+    const ageNum = age ? Number(age) : null;
     try {
       const patient = await prisma.patient.create({
         data: {
@@ -1189,6 +1585,11 @@ async function startServer() {
           medicalHistory: medicalHistory?.trim() || null,
         },
       });
+      // nic/age/gender stored via raw SQL (columns added via migration helper)
+      await prisma.$executeRawUnsafe(
+        `UPDATE "Patient" SET "nic" = ?, "age" = ?, "gender" = ? WHERE "id" = ?`,
+        nic?.trim() || null, ageNum, gender?.trim() || null, patient.id
+      );
       await logHistoryEvent({
         eventType: "patient_registered",
         actorRole: getAuthUser(req)?.role || "admin",
@@ -1196,14 +1597,85 @@ async function startServer() {
         patientId: patient.id,
         email: patient.email,
         phone: patient.phone,
-        payload: {
-          firstName: patient.firstName,
-          lastName: patient.lastName,
-        },
+        payload: { firstName: patient.firstName, lastName: patient.lastName },
       });
-      return res.status(201).json({ success: true, data: patient });
+      return res.status(201).json({ success: true, data: { ...patient, nic: nic?.trim() || null, age: ageNum, gender: gender?.trim() || null } });
     } catch (_error) {
       return res.status(500).json({ success: false, message: "Failed to create patient." });
+    }
+  });
+
+  // ── Backup / Export ────────────────────────────────────────────────────────
+  app.get("/api/backup/appointments.csv", requireAdminAuth, async (_req, res) => {
+    try {
+      const apts = await prisma.appointment.findMany({
+        orderBy: [{ date: "asc" }, { time: "asc" }],
+        include: { treatment: true, payment: true },
+      });
+      const extras = await prisma.$queryRawUnsafe<Array<{ id: string; nic: string | null; age: number | null; gender: string | null }>>(
+        `SELECT "id", "nic", "age", "gender" FROM "Appointment"`
+      );
+      const extrasMap = new Map(extras.map((e) => [e.id, e]));
+      const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+      const header = ["ID","Date","Time","First Name","Last Name","NIC","Age","Gender","Phone","Email","Treatment Type","Status","Duration (min)","Notes","Treatment Name","Treatment Cost (LKR)","Payment Status","Amount (LKR)","Amount Paid (LKR)","Balance (LKR)","Created At"];
+      const rows = apts.map((a) => {
+        const ex = extrasMap.get(a.id);
+        const balance = (a.payment?.amount ?? 0) - (a.payment?.amountPaid ?? 0);
+        return [a.id,a.date,a.time,a.firstName,a.lastName,ex?.nic??'',ex?.age??'',ex?.gender??'',a.phone,a.email,a.treatmentType,a.status,a.durationMins,a.notes??'',a.treatment?.treatmentName??'',a.treatment?.cost??'',a.payment?.status??'',a.payment?.amount??'',a.payment?.amountPaid??'',Math.max(0,balance),a.createdAt.toISOString()].map(esc).join(",");
+      });
+      const csv = [header.join(","), ...rows].join("\n");
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="appointments-${new Date().toISOString().slice(0,10)}.csv"`);
+      // Record last backup timestamp
+      await prisma.$executeRawUnsafe(`UPDATE "ClinicSettings" SET "lastBackupAt" = ? WHERE "id" = 1`, new Date().toISOString());
+      res.send(csv);
+    } catch {
+      res.status(500).json({ success: false, message: "Failed to generate backup." });
+    }
+  });
+
+  app.get("/api/backup/patients.csv", requireAdminAuth, async (_req, res) => {
+    try {
+      const patients = await prisma.patient.findMany({ orderBy: [{ createdAt: "desc" }] });
+      const extras = await prisma.$queryRawUnsafe<Array<{ id: string; nic: string | null; age: number | null; gender: string | null }>>(
+        `SELECT "id", "nic", "age", "gender" FROM "Patient"`
+      );
+      const extrasMap = new Map(extras.map((e) => [e.id, e]));
+      const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+      const header = ["ID","First Name","Last Name","NIC","Age","Gender","Phone","Email","Date of Birth","Medical History","Registered At"];
+      const rows = patients.map((p) => {
+        const ex = extrasMap.get(p.id);
+        return [p.id,p.firstName,p.lastName,ex?.nic??'',ex?.age??'',ex?.gender??'',p.phone,p.email,p.dateOfBirth??'',p.medicalHistory??'',p.createdAt.toISOString()].map(esc).join(",");
+      });
+      const csv = [header.join(","), ...rows].join("\n");
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="patients-${new Date().toISOString().slice(0,10)}.csv"`);
+      await prisma.$executeRawUnsafe(`UPDATE "ClinicSettings" SET "lastBackupAt" = ? WHERE "id" = 1`, new Date().toISOString());
+      res.send(csv);
+    } catch {
+      res.status(500).json({ success: false, message: "Failed to generate backup." });
+    }
+  });
+
+  app.get("/api/backup/settings", requireAdminAuth, async (_req, res) => {
+    try {
+      const rows = await prisma.$queryRawUnsafe<Array<{ backupSchedule: string | null; lastBackupAt: string | null }>>(
+        `SELECT "backupSchedule", "lastBackupAt" FROM "ClinicSettings" WHERE "id" = 1 LIMIT 1`
+      );
+      res.json({ success: true, data: { schedule: rows[0]?.backupSchedule ?? "weekly", lastBackupAt: rows[0]?.lastBackupAt ?? null } });
+    } catch {
+      res.status(500).json({ success: false, message: "Failed to load backup settings." });
+    }
+  });
+
+  app.patch("/api/backup/settings", requireAdminAuth, async (req, res) => {
+    const { schedule } = req.body as { schedule: string };
+    if (!["weekly", "monthly"].includes(schedule)) return res.status(400).json({ success: false, message: "schedule must be weekly or monthly." });
+    try {
+      await prisma.$executeRawUnsafe(`UPDATE "ClinicSettings" SET "backupSchedule" = ? WHERE "id" = 1`, schedule);
+      res.json({ success: true, data: { schedule } });
+    } catch {
+      res.status(500).json({ success: false, message: "Failed to update backup settings." });
     }
   });
 
@@ -1211,9 +1683,38 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
+  async function ensureUserColumns() {
+    const columns = await prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info("User")`);
+    const names = columns.map((c) => c.name);
+    if (!names.includes("username")) await prisma.$executeRawUnsafe(`ALTER TABLE "User" ADD COLUMN "username" TEXT`);
+    if (!names.includes("passwordHash")) await prisma.$executeRawUnsafe(`ALTER TABLE "User" ADD COLUMN "passwordHash" TEXT`);
+  }
+
+  async function ensurePatientAppointmentColumns() {
+    const patCols = await prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info("Patient")`);
+    const pn = patCols.map((c) => c.name);
+    if (!pn.includes("nic"))    await prisma.$executeRawUnsafe(`ALTER TABLE "Patient" ADD COLUMN "nic" TEXT`);
+    if (!pn.includes("age"))    await prisma.$executeRawUnsafe(`ALTER TABLE "Patient" ADD COLUMN "age" INTEGER`);
+    if (!pn.includes("gender")) await prisma.$executeRawUnsafe(`ALTER TABLE "Patient" ADD COLUMN "gender" TEXT`);
+
+    const aptCols = await prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info("Appointment")`);
+    const an = aptCols.map((c) => c.name);
+    if (!an.includes("nic"))    await prisma.$executeRawUnsafe(`ALTER TABLE "Appointment" ADD COLUMN "nic" TEXT`);
+    if (!an.includes("age"))    await prisma.$executeRawUnsafe(`ALTER TABLE "Appointment" ADD COLUMN "age" INTEGER`);
+    if (!an.includes("gender")) await prisma.$executeRawUnsafe(`ALTER TABLE "Appointment" ADD COLUMN "gender" TEXT`);
+
+    // Backup settings columns in ClinicSettings
+    const settingsCols = await prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info("ClinicSettings")`);
+    const sn = settingsCols.map((c) => c.name);
+    if (!sn.includes("backupSchedule")) await prisma.$executeRawUnsafe(`ALTER TABLE "ClinicSettings" ADD COLUMN "backupSchedule" TEXT DEFAULT 'weekly'`);
+    if (!sn.includes("lastBackupAt"))   await prisma.$executeRawUnsafe(`ALTER TABLE "ClinicSettings" ADD COLUMN "lastBackupAt" TEXT`);
+  }
+
   const userCount = await prisma.user.count();
   await ensureSettingsTable();
   await ensureHistoryEventsTable();
+  await ensureUserColumns();
+  await ensurePatientAppointmentColumns();
   if (userCount === 0) {
     await prisma.user.createMany({
       data: [

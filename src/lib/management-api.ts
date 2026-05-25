@@ -1,4 +1,4 @@
-import type { UserProfile, PatientRecord } from '../types';
+import type { PatientRecord } from '../types';
 
 export interface StaffRecord {
   id: string;
@@ -6,6 +6,24 @@ export interface StaffRecord {
   displayName: string;
   role: 'admin' | 'staff' | 'patient';
   createdAt: string;
+  username: string | null;
+  canLogin: boolean;
+}
+
+export interface StaffInput {
+  displayName: string;
+  email: string;
+  username: string;
+  password: string;
+  role?: 'staff' | 'admin';
+}
+
+export interface StaffUpdateInput {
+  displayName?: string;
+  email?: string;
+  username?: string;
+  password?: string;
+  role?: 'staff' | 'admin';
 }
 
 export interface PatientInput {
@@ -15,6 +33,9 @@ export interface PatientInput {
   phone: string;
   dateOfBirth?: string;
   medicalHistory?: string;
+  nic?: string;
+  age?: number;
+  gender?: string;
 }
 export interface HospitalHours {
   openTime: string;
@@ -61,7 +82,7 @@ export interface PatientHistoryRecord {
   id: string;
   firstName: string;
   lastName: string;
-  email: string;
+  email: string | null;
   phone: string;
   dateOfBirth?: string | null;
   medicalHistory?: string | null;
@@ -74,6 +95,14 @@ export interface PatientHistoryRecord {
   isRegisteredPatient: boolean;
   alternateEmails: string[];
   emailChangedLikely: boolean;
+}
+
+export interface OverviewStats {
+  todayCount: number;
+  pendingCount: number;
+  pendingPayments: number;
+  totalPatients: number;
+  weeklyChart: Array<{ name: string; count: number }>;
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -92,6 +121,26 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 export async function listStaff() {
   const result = await request<{ success: boolean; data: StaffRecord[] }>('/api/staff');
   return result.data;
+}
+
+export async function createStaff(input: StaffInput) {
+  const result = await request<{ success: boolean; data: StaffRecord & { username: string } }>('/api/staff', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  return result.data;
+}
+
+export async function updateStaff(id: string, input: StaffUpdateInput) {
+  const result = await request<{ success: boolean; data: StaffRecord }>(`/api/staff/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+  return result.data;
+}
+
+export async function deleteStaff(id: string) {
+  await request<{ success: boolean }>(`/api/staff/${id}`, { method: 'DELETE' });
 }
 
 export async function listPatients() {
@@ -127,6 +176,24 @@ export async function listPatientHistories() {
 
 export async function getNotificationSettings() {
   const result = await request<{ success: boolean; data: NotificationSettings }>('/api/settings/notifications');
+  return result.data;
+}
+
+export async function getOverviewStats() {
+  const result = await request<{ success: boolean; data: OverviewStats }>('/api/stats/overview');
+  return result.data;
+}
+
+export async function listTreatmentTypes(): Promise<string[]> {
+  const result = await request<{ success: boolean; data: string[] }>('/api/settings/treatment-types');
+  return result.data;
+}
+
+export async function saveTreatmentTypes(types: string[]): Promise<string[]> {
+  const result = await request<{ success: boolean; data: string[] }>('/api/settings/treatment-types', {
+    method: 'PUT',
+    body: JSON.stringify({ types }),
+  });
   return result.data;
 }
 

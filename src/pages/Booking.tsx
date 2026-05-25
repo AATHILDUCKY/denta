@@ -14,7 +14,10 @@ export default function Booking() {
     lastName: '',
     email: '',
     phone: '',
-    notes: ''
+    notes: '',
+    nic: '',
+    age: '',
+    gender: '',
   });
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -110,7 +113,7 @@ export default function Booking() {
   }, [formData.email]);
 
   const isStepOneValid = Boolean(formData.date && formData.time);
-  const isStepTwoValid = Boolean(formData.firstName.trim() && formData.lastName.trim() && isPhoneValid && isEmailValid);
+  const isStepTwoValid = Boolean(formData.firstName.trim() && formData.lastName.trim() && isPhoneValid && isEmailValid && formData.age && formData.gender);
 
   const nextStep = () => {
     setError('');
@@ -154,6 +157,7 @@ export default function Booking() {
         phone: normalizedPhone,
         status: 'pending',
         durationMins: 15,
+        age: formData.age !== '' ? Number(formData.age) : undefined,
       });
       setSuccess(true);
     } catch (err) {
@@ -342,6 +346,45 @@ export default function Booking() {
                         />
                         <p className="mt-2 text-xs text-brand-muted">Accepted: `0757545358` or `+94757545358`.</p>
                       </div>
+                    </div>
+
+                    <div className="grid sm:grid-cols-2 gap-5">
+                      <div>
+                        <label className="block text-[11px] font-bold text-brand-muted uppercase tracking-widest mb-3">Age (Required)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          max="150"
+                          className="w-full h-12 bg-brand-bg-soft rounded-xl border border-brand-border px-4 text-sm font-semibold text-brand-ink focus:outline-none focus:ring-2 focus:ring-brand-primary/25"
+                          placeholder="e.g. 35"
+                          value={formData.age}
+                          onChange={(e) => setFormData({ ...formData, age: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-brand-muted uppercase tracking-widest mb-3">Gender (Required)</label>
+                        <select
+                          className="w-full h-12 bg-brand-bg-soft rounded-xl border border-brand-border px-4 text-sm font-semibold text-brand-ink focus:outline-none focus:ring-2 focus:ring-brand-primary/25"
+                          value={formData.gender}
+                          onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
+                        >
+                          <option value="">Select gender</option>
+                          <option value="male">Male</option>
+                          <option value="female">Female</option>
+                          <option value="other">Other</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-brand-muted uppercase tracking-widest mb-3">NIC (Optional)</label>
+                      <input
+                        type="text"
+                        className="w-full h-12 bg-brand-bg-soft rounded-xl border border-brand-border px-4 text-sm font-semibold text-brand-ink focus:outline-none focus:ring-2 focus:ring-brand-primary/25"
+                        placeholder="e.g. 991234567V"
+                        value={formData.nic}
+                        onChange={(e) => setFormData({ ...formData, nic: e.target.value })}
+                      />
                     </div>
                   </div>
                 </div>
