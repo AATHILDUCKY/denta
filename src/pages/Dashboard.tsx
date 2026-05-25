@@ -467,7 +467,7 @@ function DashboardAppointments({ userRole }: { userRole: UserProfile['role'] }) 
   const [appointments, setAppointments] = useState<AppointmentRecord[]>([]);
   const [selected, setSelected] = useState<AppointmentRecord | null>(null);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'confirmed' | 'cancelled' | 'completed'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'uncompleted' | 'pending' | 'confirmed' | 'cancelled' | 'completed'>('uncompleted');
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
   const [actionError, setActionError] = useState('');
@@ -555,7 +555,9 @@ function DashboardAppointments({ userRole }: { userRole: UserProfile['role'] }) 
   }, []);
 
   const visible = appointments.filter((a) => {
-    const statusOk = statusFilter === 'all' || a.status === statusFilter;
+    const statusOk =
+      statusFilter === 'all' ||
+      (statusFilter === 'uncompleted' ? a.status !== 'completed' && a.status !== 'cancelled' : a.status === statusFilter);
     const q = `${a.firstName} ${a.lastName} ${a.treatmentType} ${a.phone} ${a.email}`.toLowerCase();
     return statusOk && q.includes(search.toLowerCase());
   });
@@ -578,6 +580,7 @@ function DashboardAppointments({ userRole }: { userRole: UserProfile['role'] }) 
     pending: appointments.filter((a) => a.status === 'pending').length,
     confirmed: appointments.filter((a) => a.status === 'confirmed').length,
     completed: appointments.filter((a) => a.status === 'completed').length,
+    uncompleted: appointments.filter((a) => a.status !== 'completed' && a.status !== 'cancelled').length,
   }), [appointments]);
 
   // "New" = created within the last 2 hours
@@ -708,6 +711,7 @@ function DashboardAppointments({ userRole }: { userRole: UserProfile['role'] }) 
             className="px-3 py-2 border border-brand-border rounded-lg text-xs min-w-[160px] bg-white" />
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
             className="px-3 py-2 border border-brand-border rounded-lg text-xs bg-white">
+            <option value="uncompleted">Uncompleted ({counts.uncompleted})</option>
             <option value="all">All ({counts.all})</option>
             <option value="pending">Pending ({counts.pending})</option>
             <option value="confirmed">Confirmed ({counts.confirmed})</option>

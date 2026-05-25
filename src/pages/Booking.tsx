@@ -1,8 +1,72 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronRight, CheckCircle2, Clock3 } from 'lucide-react';
+import { ChevronRight, CheckCircle2, Clock3, ChevronLeft } from 'lucide-react';
 import { createAppointment, listAppointmentAvailability, type AppointmentAvailability } from '../lib/appointments-api';
 import { getHospitalHours } from '../lib/management-api';
+
+function MiniCalendar({ value, onChange }: { value: string; onChange: (d: string) => void }) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const todayStr = today.toISOString().split('T')[0];
+  const [cursor, setCursor] = useState(() => {
+    const d = value ? new Date(value + 'T00:00:00') : new Date();
+    return { year: d.getFullYear(), month: d.getMonth() };
+  });
+
+  const firstDay = new Date(cursor.year, cursor.month, 1).getDay();
+  const daysInMonth = new Date(cursor.year, cursor.month + 1, 0).getDate();
+  const monthLabel = new Date(cursor.year, cursor.month).toLocaleString('default', { month: 'long', year: 'numeric' });
+
+  const cells: (number | null)[] = [...Array(firstDay).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+
+  const toStr = (day: number) =>
+    `${cursor.year}-${String(cursor.month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+
+  const prev = () => setCursor(c => c.month === 0 ? { year: c.year - 1, month: 11 } : { ...c, month: c.month - 1 });
+  const next = () => setCursor(c => c.month === 11 ? { year: c.year + 1, month: 0 } : { ...c, month: c.month + 1 });
+
+  return (
+    <div className="bg-brand-bg-soft rounded-xl border border-brand-border p-4 select-none">
+      <div className="flex items-center justify-between mb-3">
+        <button type="button" onClick={prev} className="p-1 rounded-lg hover:bg-brand-border transition"><ChevronLeft className="h-4 w-4 text-brand-muted" /></button>
+        <span className="text-xs font-bold text-brand-ink tracking-wide">{monthLabel}</span>
+        <button type="button" onClick={next} className="p-1 rounded-lg hover:bg-brand-border transition"><ChevronRight className="h-4 w-4 text-brand-muted" /></button>
+      </div>
+      <div className="grid grid-cols-7 mb-1">
+        {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => (
+          <div key={d} className="text-center text-[10px] font-bold text-brand-muted py-1">{d}</div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-y-1">
+        {cells.map((day, i) => {
+          if (!day) return <div key={i} />;
+          const str = toStr(day);
+          const isPast = str < todayStr;
+          const isSelected = str === value;
+          const isToday = str === todayStr;
+          return (
+            <button
+              key={str}
+              type="button"
+              disabled={isPast}
+              onClick={() => onChange(str)}
+              className={`h-8 w-full rounded-lg text-xs font-semibold transition-all ${
+                isSelected
+                  ? 'bg-brand-primary text-white shadow-sm'
+                  : isPast
+                    ? 'text-rose-400 bg-rose-50 border border-rose-200 cursor-not-allowed line-through opacity-70'
+                    : isToday
+                      ? 'border border-brand-primary text-brand-primary hover:bg-brand-primary/10'
+                      : 'text-brand-ink hover:bg-brand-border'
+              }`}
+            >
+              {day}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export default function Booking() {
   const [step, setStep] = useState(1);
@@ -246,12 +310,9 @@ export default function Booking() {
                   <div className="lg:col-span-8 space-y-7">
                     <div>
                       <label className="block text-[11px] font-bold text-brand-muted uppercase tracking-widest mb-3">Appointment Date</label>
-                      <input
-                        type="date"
-                        min={new Date().toISOString().split('T')[0]}
-                        className="w-full h-12 bg-brand-bg-soft rounded-xl border border-brand-border px-4 text-sm font-semibold text-brand-ink focus:outline-none focus:ring-2 focus:ring-brand-primary/25"
+                      <MiniCalendar
                         value={formData.date}
-                        onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                        onChange={(d) => setFormData({ ...formData, date: d })}
                       />
                     </div>
 
