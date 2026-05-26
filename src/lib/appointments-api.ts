@@ -60,8 +60,9 @@ export interface PaymentInput {
 export interface AppointmentRecord extends AppointmentInput {
   id: string;
   createdAt: string;
-  treatment?: TreatmentRecord | null;
+  treatments: TreatmentRecord[];
   payment?: PaymentRecord | null;
+  clinicalNotes?: string | null;
 }
 
 export interface AppointmentAvailability {
@@ -117,12 +118,32 @@ export async function updateAppointmentStatus(id: string, status: AppointmentSta
   });
 }
 
-export async function upsertTreatment(appointmentId: string, data: TreatmentInput): Promise<TreatmentRecord> {
+export async function addTreatment(appointmentId: string, data: TreatmentInput): Promise<TreatmentRecord> {
   const result = await request<{ success: boolean; data: TreatmentRecord }>(`/api/appointments/${appointmentId}/treatment`, {
     method: 'POST',
     body: JSON.stringify(data),
   });
   return result.data;
+}
+
+export async function updateTreatmentNotes(appointmentId: string, treatmentId: string, notes: string): Promise<void> {
+  await request<{ success: boolean }>(`/api/appointments/${appointmentId}/treatment/${treatmentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ notes }),
+  });
+}
+
+export async function deleteTreatment(appointmentId: string, treatmentId: string): Promise<void> {
+  await request<{ success: boolean }>(`/api/appointments/${appointmentId}/treatment/${treatmentId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function saveClinicalNote(appointmentId: string, clinicalNotes: string): Promise<void> {
+  await request<{ success: boolean }>(`/api/appointments/${appointmentId}/clinical-notes`, {
+    method: 'PATCH',
+    body: JSON.stringify({ clinicalNotes }),
+  });
 }
 
 export async function upsertPayment(appointmentId: string, data: PaymentInput): Promise<PaymentRecord> {

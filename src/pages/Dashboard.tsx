@@ -13,8 +13,8 @@ import {
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import {
   createAppointment, listAppointments, updateAppointmentSlot, updateAppointmentStatus,
-  upsertTreatment, upsertPayment,
-  type AppointmentRecord, type TreatmentInput, type PaymentInput, type PaymentStatus
+  addTreatment, deleteTreatment, upsertPayment, saveClinicalNote,
+  type AppointmentRecord, type TreatmentRecord, type TreatmentInput, type PaymentInput, type PaymentStatus
 } from '../lib/appointments-api';
 import {
   listStaff, createStaff, updateStaff, deleteStaff, createPatient, getHospitalHours, updateHospitalHours,
@@ -218,6 +218,8 @@ const DENTAL_TREATMENTS = [
   'Fluoride Treatment', 'Dental X-Ray', 'Cavity Check-up', 'Wisdom Tooth Removal',
 ];
 
+const isConsultationType = (type: string) => type.toLowerCase().includes('consultation');
+
 function AppointmentDetailPanel({
   appointment,
   fifteenMinuteSlots,
@@ -235,8 +237,9 @@ function AppointmentDetailPanel({
   const [editTime, setEditTime] = useState(appointment.time);
   const [editDuration, setEditDuration] = useState(appointment.durationMins ?? 60);
 
+  const isConsult = isConsultationType(appointment.treatmentType);
   const initPay = (): PaymentInput => ({
-    amount: appointment.payment?.amount ?? appointment.treatment?.cost ?? 0,
+    amount: appointment.payment?.amount ?? (isConsult ? 0 : (appointment.treatments ?? []).reduce((s, t) => s + t.cost, 0)),
     amountPaid: appointment.payment?.amountPaid ?? 0,
     status: appointment.payment?.status ?? 'pending',
     method: appointment.payment?.method ?? '',
@@ -247,6 +250,11 @@ function AppointmentDetailPanel({
   const [savingPay, setSavingPay] = useState(false);
   const [payMsg, setPayMsg] = useState('');
 
+  const [showNotesForm, setShowNotesForm] = useState(false);
+  const [notesDraft, setNotesDraft] = useState('');
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [notesMsg, setNotesMsg] = useState('');
+
   useEffect(() => {
     setEditDate(appointment.date);
     setEditTime(appointment.time);
@@ -254,7 +262,21 @@ function AppointmentDetailPanel({
     setPayForm(initPay());
     setShowPayForm(false);
     setPayMsg('');
+    setShowNotesForm(false);
+    setNotesDraft('');
+    setNotesMsg('');
   }, [appointment.id]);
+
+  const saveNotes = async () => {
+    setSavingNotes(true); setNotesMsg('');
+    try {
+      await saveClinicalNote(appointment.id, notesDraft);
+      setNotesMsg('Saved.');
+      setShowNotesForm(false);
+      onRefresh();
+    } catch (err) { setNotesMsg(err instanceof Error ? err.message : 'Failed.'); }
+    finally { setSavingNotes(false); }
+  };
 
   const balance = payForm.amount - payForm.amountPaid;
   const existingPay = appointment.payment;
@@ -287,11 +309,11 @@ function AppointmentDetailPanel({
         </div>
         <div className="flex items-center gap-2 mt-2 flex-wrap">
           <PaymentBadge status={existingPay?.status} />
-          {appointment.treatment && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-100">
-              <Stethoscope className="h-3 w-3" />{appointment.treatment.treatmentName}
+          {(appointment.treatments ?? []).map((t) => (
+            <span key={t.id} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${isConsult ? 'bg-violet-50 text-violet-700 border-violet-100' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>
+              <Stethoscope className="h-3 w-3" />{t.treatmentName}{!isConsult && t.cost > 0 ? ` · LKR ${t.cost.toLocaleString()}` : ''}
             </span>
-          )}
+          ))}
         </div>
       </div>
 
@@ -308,10 +330,61 @@ function AppointmentDetailPanel({
 
         {appointment.notes && (
           <div className="bg-brand-bg-soft rounded-lg px-3 py-2 text-xs">
-            <p className="text-[10px] text-brand-muted font-bold uppercase tracking-wide mb-1">Notes</p>
+            <p className="text-[10px] text-brand-muted font-bold uppercase tracking-wide mb-1">Booking Notes</p>
             <p className="text-brand-ink break-words whitespace-pre-wrap overflow-hidden">{appointment.notes}</p>
           </div>
         )}
+
+        {/* Clinical Notes — one note per appointment */}
+        <div className="border border-brand-border rounded-lg overflow-hidden">
+          <div className="flex items-center gap-2 px-3 py-2.5 bg-brand-bg-soft border-b border-brand-border">
+            <Stethoscope className="h-3.5 w-3.5 text-brand-primary shrink-0" />
+            <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-brand-muted flex-1">Clinical Notes</p>
+            {appointment.clinicalNotes && !showNotesForm && (
+              <button onClick={() => { setNotesDraft(appointment.clinicalNotes ?? ''); setShowNotesForm(true); setNotesMsg(''); }}
+                className="text-[10px] font-bold text-brand-primary hover:text-brand-secondary transition">
+                Edit
+              </button>
+            )}
+          </div>
+
+          <div className="p-3 space-y-2">
+            {showNotesForm ? (
+              <>
+                <textarea
+                  value={notesDraft}
+                  onChange={(e) => setNotesDraft(e.target.value)}
+                  rows={4}
+                  placeholder="Observations, diagnosis, findings, treatment notes…"
+                  autoFocus
+                  className="w-full border border-brand-border rounded-lg px-3 py-2 text-xs resize-none focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary/20"
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setShowNotesForm(false); setNotesDraft(''); setNotesMsg(''); }}
+                    className="flex-1 py-2 text-xs font-semibold rounded-lg border border-brand-border text-brand-muted hover:bg-brand-bg transition">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveNotes}
+                    disabled={savingNotes}
+                    className="flex-1 py-2 text-xs font-semibold rounded-lg bg-brand-primary text-white disabled:opacity-50 hover:bg-brand-secondary transition">
+                    {savingNotes ? 'Saving…' : 'Save Note'}
+                  </button>
+                </div>
+                {notesMsg && <p className={`text-xs font-semibold ${notesMsg === 'Saved.' ? 'text-emerald-700' : 'text-red-600'}`}>{notesMsg}</p>}
+              </>
+            ) : appointment.clinicalNotes ? (
+              <p className="text-xs text-brand-ink leading-relaxed whitespace-pre-wrap break-words">{appointment.clinicalNotes}</p>
+            ) : (
+              <button
+                onClick={() => { setNotesDraft(''); setShowNotesForm(true); setNotesMsg(''); }}
+                className="w-full flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-lg border-2 border-dashed border-brand-border text-brand-muted hover:border-brand-primary hover:text-brand-primary hover:bg-brand-bg transition">
+                <Plus className="h-3.5 w-3.5" />Add Clinical Note
+              </button>
+            )}
+          </div>
+        </div>
 
         {/* Status actions */}
         <div className="border border-brand-border rounded-lg p-3 space-y-2">
@@ -818,9 +891,9 @@ function DashboardAppointments({ userRole }: { userRole: UserProfile['role'] }) 
                               <div className="flex flex-col items-end gap-1.5 shrink-0">
                                 <StatusBadge status={apt.status ?? 'pending'} />
                                 <div className="flex items-center gap-1">
-                                  {apt.treatment && (
+                                  {apt.treatments.length > 0 && (
                                     <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 font-bold border border-blue-100 flex items-center gap-0.5">
-                                      <Stethoscope className="h-2.5 w-2.5" />Tx
+                                      <Stethoscope className="h-2.5 w-2.5" />Tx×{apt.treatments.length}
                                     </span>
                                   )}
                                   <PaymentBadge status={apt.payment?.status} />
@@ -1079,9 +1152,14 @@ function DashboardPatientHistory() {
   const [registerError, setRegisterError] = useState('');
 
   // Treatment form
-  const [treatment, setTreatment] = useState<TreatmentInput>({ treatmentName: '', teethNumbers: '', notes: '', cost: 0 });
+  const [treatment, setTreatment] = useState<TreatmentInput>({ treatmentName: '', cost: 0 });
   const [savingTreatment, setSavingTreatment] = useState(false);
   const [treatmentMsg, setTreatmentMsg] = useState('');
+
+  // Clinical note (one per appointment)
+  const [aptNotesDraft, setAptNotesDraft] = useState('');
+  const [savingAptNote, setSavingAptNote] = useState(false);
+  const [aptNoteMsg, setAptNoteMsg] = useState('');
 
   // Payment form
   const [payment, setPayment] = useState<PaymentInput>({ amount: 0, amountPaid: 0, status: 'pending', method: '', notes: '' });
@@ -1135,8 +1213,9 @@ function DashboardPatientHistory() {
       if (selectedAptIdRef.current) {
         const upd = apts.find((a) => a.id === selectedAptIdRef.current);
         if (upd) {
-          setTreatment({ treatmentName: upd.treatment?.treatmentName ?? '', teethNumbers: upd.treatment?.teethNumbers ?? '', notes: upd.treatment?.notes ?? '', cost: upd.treatment?.cost ?? 0 });
-          setPayment({ amount: upd.payment?.amount ?? upd.treatment?.cost ?? 0, amountPaid: upd.payment?.amountPaid ?? 0, status: upd.payment?.status ?? 'pending', method: upd.payment?.method ?? '', notes: upd.payment?.notes ?? '' });
+          const totalCost = upd.treatments.reduce((s, t) => s + t.cost, 0);
+          setTreatment({ treatmentName: '', notes: '', cost: 0 });
+          setPayment({ amount: upd.payment?.amount ?? totalCost, amountPaid: upd.payment?.amountPaid ?? 0, status: upd.payment?.status ?? 'pending', method: upd.payment?.method ?? '', notes: upd.payment?.notes ?? '' });
         }
       }
     } catch (err) { if (!silent) setError(err instanceof Error ? err.message : 'Failed to load.'); }
@@ -1174,9 +1253,11 @@ function DashboardPatientHistory() {
   const selectApt = (apt: AppointmentRecord | null) => {
     if (!apt) { setSelectedAptId(''); return; }
     setSelectedAptId(apt.id);
-    setTreatment({ treatmentName: apt.treatment?.treatmentName ?? '', teethNumbers: apt.treatment?.teethNumbers ?? '', notes: apt.treatment?.notes ?? '', cost: apt.treatment?.cost ?? 0 });
-    setPayment({ amount: apt.payment?.amount ?? apt.treatment?.cost ?? 0, amountPaid: apt.payment?.amountPaid ?? 0, status: apt.payment?.status ?? 'pending', method: apt.payment?.method ?? '', notes: apt.payment?.notes ?? '' });
+    const totalCost = apt.treatments.reduce((s, t) => s + t.cost, 0);
+    setTreatment({ treatmentName: '', cost: 0 });
+    setPayment({ amount: apt.payment?.amount ?? totalCost, amountPaid: apt.payment?.amountPaid ?? 0, status: apt.payment?.status ?? 'pending', method: apt.payment?.method ?? '', notes: apt.payment?.notes ?? '' });
     setTreatmentMsg(''); setPaymentMsg('');
+    setAptNotesDraft(''); setAptNoteMsg('');
   };
 
   const [visibleCount, setVisibleCount] = useState(9);
@@ -1371,6 +1452,7 @@ function DashboardPatientHistory() {
                     </div>
                   ) : patientApts.map((apt) => {
                     const isSel = selectedAptId === apt.id;
+                    const aptIsConsult = isConsultationType(apt.treatmentType);
                     return (
                       <div key={apt.id} onClick={() => selectApt(isSel ? null : apt)}
                         className={`border rounded-xl p-3 cursor-pointer transition ${isSel ? 'border-brand-primary bg-brand-bg' : 'border-brand-border hover:border-brand-accent hover:bg-brand-bg-soft'}`}>
@@ -1382,67 +1464,125 @@ function DashboardPatientHistory() {
                           <StatusBadge status={apt.status ?? 'pending'} />
                         </div>
                         <div className="flex items-center gap-2 mt-2 flex-wrap">
-                          {apt.treatment ? (
-                            <span className="inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
-                              <Stethoscope className="h-2.5 w-2.5" />{apt.treatment.treatmentName} · LKR {apt.treatment.cost.toLocaleString()}
-                            </span>
+                          {apt.treatments.length > 0 ? (
+                            apt.treatments.map((t) => (
+                              <span key={t.id} className={`inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full border ${aptIsConsult ? 'bg-violet-50 text-violet-700 border-violet-100' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>
+                                <Stethoscope className="h-2.5 w-2.5" />{t.treatmentName}{!aptIsConsult && t.cost > 0 ? ` · LKR ${t.cost.toLocaleString()}` : ''}
+                              </span>
+                            ))
                           ) : (
-                            <span className="text-[9px] text-brand-muted italic">No treatment recorded</span>
+                            <span className="text-[9px] text-brand-muted italic">No {aptIsConsult ? 'plan' : 'treatment'} recorded</span>
                           )}
                           <PaymentBadge status={apt.payment?.status} />
                         </div>
                         {isSel && (
                           <div className="mt-3 pt-3 border-t border-brand-border space-y-4" onClick={(e) => e.stopPropagation()}>
-                            {/* Inline Treatment Form */}
+                            {/* Treatments / Treatment Plan */}
                             <div className="space-y-2">
-                              <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-brand-muted flex items-center gap-1.5">
-                                <Stethoscope className="h-3 w-3" />Treatment
-                              </p>
-                              {apt.treatment && (
-                                <div className="bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 text-xs text-emerald-700 font-semibold flex items-center gap-2">
-                                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />Treatment recorded — edit below to update.
+                              <div className="flex items-center gap-2">
+                                <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-brand-muted flex items-center gap-1.5">
+                                  <Stethoscope className="h-3 w-3" />{aptIsConsult ? 'Treatment Plan' : 'Treatments'}
+                                </p>
+                                {aptIsConsult && (
+                                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">Consultation — plan treatments below</span>
+                                )}
+                              </div>
+                              {apt.treatments.length > 0 && (
+                                <div className="space-y-1">
+                                  {apt.treatments.map((t: TreatmentRecord) => (
+                                    <div key={t.id} className={`flex items-center justify-between gap-2 border rounded-lg px-3 py-1.5 ${aptIsConsult ? 'bg-violet-50 border-violet-100' : 'bg-blue-50 border-blue-100'}`}>
+                                      <div className="min-w-0 flex-1">
+                                        <p className={`text-xs font-semibold truncate ${aptIsConsult ? 'text-violet-700' : 'text-blue-700'}`}>{t.treatmentName}</p>
+                                        {(!aptIsConsult && t.cost > 0) && (
+                                          <p className={`text-[10px] ${aptIsConsult ? 'text-violet-600' : 'text-blue-600'}`}>LKR {t.cost.toLocaleString()}</p>
+                                        )}
+                                      </div>
+                                      <button onClick={async (e) => {
+                                        e.stopPropagation();
+                                        try { await deleteTreatment(apt.id, t.id); await refreshData(true); } catch { /* silent */ }
+                                      }} className="shrink-0 text-[10px] text-red-500 hover:text-red-700 font-bold px-1.5 py-0.5 rounded hover:bg-red-50 transition">✕</button>
+                                    </div>
+                                  ))}
                                 </div>
                               )}
                               <input list="dental-treatments-hist" value={treatment.treatmentName}
                                 onChange={(e) => setTreatment((p) => ({ ...p, treatmentName: e.target.value }))}
-                                placeholder="Treatment name *"
+                                placeholder={aptIsConsult ? 'Treatment needed (e.g. Crown Placement) *' : 'Treatment name *'}
                                 className="w-full border border-brand-border rounded-lg px-3 py-2 text-xs" />
                               <datalist id="dental-treatments-hist">{treatmentTypes.map((t) => <option key={t} value={t} />)}</datalist>
-                              <div className="grid grid-cols-2 gap-2">
-                                <input value={treatment.teethNumbers ?? ''} onChange={(e) => setTreatment((p) => ({ ...p, teethNumbers: e.target.value }))}
-                                  placeholder="Teeth numbers (optional)"
-                                  className="border border-brand-border rounded-lg px-3 py-2 text-xs" />
+                              {!aptIsConsult && (
                                 <input type="number" min="0" step="100" value={treatment.cost ?? 0}
                                   onChange={(e) => setTreatment((p) => ({ ...p, cost: Number(e.target.value) }))}
                                   placeholder="Cost (LKR)"
-                                  className="border border-brand-border rounded-lg px-3 py-2 text-xs" />
-                              </div>
-                              <textarea value={treatment.notes ?? ''} onChange={(e) => setTreatment((p) => ({ ...p, notes: e.target.value }))}
-                                rows={2} placeholder="Clinical notes (optional)"
-                                className="w-full border border-brand-border rounded-lg px-3 py-2 text-xs resize-none" />
+                                  className="w-full border border-brand-border rounded-lg px-3 py-2 text-xs" />
+                              )}
                               <button onClick={async (e) => {
                                 e.stopPropagation();
                                 if (!treatment.treatmentName.trim()) return;
                                 setSavingTreatment(true); setTreatmentMsg('');
                                 try {
-                                  await upsertTreatment(apt.id, treatment);
-                                  setTreatmentMsg('Treatment saved.');
+                                  await addTreatment(apt.id, { ...treatment, cost: aptIsConsult ? 0 : (treatment.cost ?? 0) });
+                                  setTreatmentMsg(aptIsConsult ? 'Added to plan.' : 'Treatment added.');
+                                  setTreatment({ treatmentName: '', cost: 0 });
                                   await refreshData(true);
                                 } catch (err) { setTreatmentMsg(err instanceof Error ? err.message : 'Failed.'); }
                                 finally { setSavingTreatment(false); }
                               }} disabled={savingTreatment || !treatment.treatmentName.trim()}
-                                className="w-full py-2 text-xs font-semibold rounded-lg bg-blue-600 text-white disabled:opacity-50 hover:bg-blue-700 transition">
-                                {savingTreatment ? 'Saving…' : apt.treatment ? 'Update Treatment' : 'Save Treatment'}
+                                className={`w-full py-2 text-xs font-semibold rounded-lg text-white disabled:opacity-50 transition ${aptIsConsult ? 'bg-violet-600 hover:bg-violet-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                                {savingTreatment ? 'Saving…' : aptIsConsult ? '+ Add to Plan' : '+ Add Treatment'}
                               </button>
                               {treatmentMsg && <p className={`text-xs font-semibold ${treatmentMsg.startsWith('Failed') ? 'text-red-600' : 'text-emerald-700'}`}>{treatmentMsg}</p>}
+                            </div>
+
+                            {/* Clinical Notes — one shared note log per appointment */}
+                            <div className="space-y-2 pt-3 border-t border-brand-border">
+                              <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-brand-muted flex items-center gap-1.5">
+                                <Stethoscope className="h-3 w-3" />Clinical Notes
+                              </p>
+                              {apt.clinicalNotes && (
+                                <div className="bg-brand-bg-soft border border-brand-border rounded-lg px-3 py-2.5 text-xs text-brand-ink whitespace-pre-wrap break-words leading-relaxed">
+                                  {apt.clinicalNotes}
+                                </div>
+                              )}
+                              <textarea
+                                value={aptNotesDraft}
+                                onChange={(e) => setAptNotesDraft(e.target.value)}
+                                rows={3}
+                                placeholder={apt.clinicalNotes ? 'Add another note…' : 'Observations, diagnosis, findings…'}
+                                className="w-full border border-brand-border rounded-lg px-3 py-2 text-xs resize-none focus:outline-none focus:border-brand-primary focus:ring-1 focus:ring-brand-primary/20"
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                              <button onClick={async (e) => {
+                                e.stopPropagation();
+                                if (!aptNotesDraft.trim()) return;
+                                setSavingAptNote(true); setAptNoteMsg('');
+                                try {
+                                  const ts = new Date().toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                                  const entry = `[${ts}]\n${aptNotesDraft.trim()}`;
+                                  const combined = apt.clinicalNotes ? `${apt.clinicalNotes}\n\n${entry}` : entry;
+                                  await saveClinicalNote(apt.id, combined);
+                                  setAptNotesDraft('');
+                                  setAptNoteMsg('Note saved.');
+                                  await refreshData(true);
+                                } catch (err) { setAptNoteMsg(err instanceof Error ? err.message : 'Failed.'); }
+                                finally { setSavingAptNote(false); }
+                              }} disabled={savingAptNote || !aptNotesDraft.trim()}
+                                className="w-full py-2 text-xs font-semibold rounded-lg bg-brand-primary text-white disabled:opacity-50 hover:bg-brand-secondary transition">
+                                {savingAptNote ? 'Saving…' : apt.clinicalNotes ? '+ Add Note' : 'Save Note'}
+                              </button>
+                              {aptNoteMsg && <p className={`text-xs font-semibold ${aptNoteMsg === 'Note saved.' ? 'text-emerald-700' : 'text-red-600'}`}>{aptNoteMsg}</p>}
                             </div>
 
                             {/* Inline Payment Form */}
                             <div className="space-y-2 pt-3 border-t border-brand-border">
                               <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-brand-muted flex items-center gap-1.5">
-                                <CreditCard className="h-3 w-3" />Payment
+                                <CreditCard className="h-3 w-3" />{aptIsConsult ? 'Consultation Fee' : 'Payment'}
                               </p>
-                              {!apt.treatment && (
+                              {aptIsConsult ? (
+                                <div className="bg-violet-50 border border-violet-100 rounded-lg px-3 py-2 text-xs text-violet-700 flex items-center gap-2">
+                                  <AlertCircle className="h-3.5 w-3.5 shrink-0" />Treatment plan above is free to set. Enter the consultation fee here.
+                                </div>
+                              ) : apt.treatments.length === 0 && (
                                 <div className="bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 text-xs text-amber-700 flex items-center gap-2">
                                   <AlertCircle className="h-3.5 w-3.5 shrink-0" />Record treatment first to auto-fill cost.
                                 </div>
@@ -2141,9 +2281,16 @@ export function DoctorDashboard({ user, onLogout }: { user: UserProfile; onLogou
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'today' | 'upcoming' | 'all'>('today');
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [treatment, setTreatment] = useState<TreatmentInput>({ treatmentName: '', teethNumbers: '', notes: '', cost: 0 });
+  const [treatment, setTreatment] = useState<TreatmentInput>({ treatmentName: '', cost: 0 });
   const [savingTx, setSavingTx] = useState(false);
   const [txMsg, setTxMsg] = useState('');
+  const [consultPrice, setConsultPrice] = useState(0);
+  const [savingConsultPrice, setSavingConsultPrice] = useState(false);
+  const [clinicalNoteDraft, setClinicalNoteDraft] = useState('');
+  const [savingClinicalNote, setSavingClinicalNote] = useState(false);
+  const [clinicalNoteMsg, setClinicalNoteMsg] = useState('');
+  const [editingNoteIdx, setEditingNoteIdx] = useState<number | null>(null);
+  const [editingNoteText, setEditingNoteText] = useState('');
   const [treatmentTypes, setTreatmentTypes] = useState<string[]>(DENTAL_TREATMENTS);
   const [nowMins, setNowMins] = useState(() => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); });
 
@@ -2183,37 +2330,37 @@ export function DoctorDashboard({ user, onLogout }: { user: UserProfile; onLogou
   const selectCard = (apt: AppointmentRecord) => {
     if (expandedId === apt.id) { setExpandedId(null); return; }
     setExpandedId(apt.id);
-    setTreatment({
-      treatmentName: apt.treatment?.treatmentName ?? '',
-      teethNumbers: apt.treatment?.teethNumbers ?? '',
-      notes: apt.treatment?.notes ?? '',
-      cost: apt.treatment?.cost ?? 0,
-    });
+    setTreatment({ treatmentName: '', cost: 0 });
     setTxMsg('');
+    setClinicalNoteDraft('');
+    setClinicalNoteMsg('');
+    setEditingNoteIdx(null);
+    setEditingNoteText('');
+    setConsultPrice(apt.payment?.amount ?? 0);
+  };
+
+  const saveConsultPrice = async (aptId: string) => {
+    setSavingConsultPrice(true);
+    try {
+      const apt = appointments.find((a) => a.id === aptId);
+      const existingPaid = apt?.payment?.amountPaid ?? 0;
+      const existingStatus = apt?.payment?.status ?? 'pending';
+      await upsertPayment(aptId, { amount: consultPrice, amountPaid: existingPaid, status: existingStatus });
+      setAppointments((prev) => prev.map((a) => a.id === aptId ? { ...a, payment: { ...a.payment, amount: consultPrice } as any } : a));
+    } catch { /* silent */ }
+    finally { setSavingConsultPrice(false); }
   };
 
   const saveTx = async (aptId: string) => {
     if (!treatment.treatmentName.trim()) { setTxMsg('Treatment name is required.'); return; }
+    const apt = appointments.find((a) => a.id === aptId);
+    const isConsult = apt ? isConsultationType(apt.treatmentType) : false;
     setSavingTx(true); setTxMsg('');
     try {
-      const saved = await upsertTreatment(aptId, treatment);
-      // Sync cost to payment record so /dashboard/appointments shows it
-      const cost = treatment.cost ?? 0;
-      if (cost > 0) {
-        const apt = appointments.find((a) => a.id === aptId);
-        const existingPay = apt?.payment;
-        if (!existingPay || existingPay.amount !== cost) {
-          await upsertPayment(aptId, {
-            amount: cost,
-            amountPaid: existingPay?.amountPaid ?? 0,
-            status: existingPay?.status ?? 'pending',
-            method: existingPay?.method ?? undefined,
-            notes: existingPay?.notes ?? undefined,
-          });
-        }
-      }
-      setAppointments((prev) => prev.map((a) => a.id === aptId ? { ...a, treatment: saved } : a));
-      setTxMsg('Saved.');
+      const saved = await addTreatment(aptId, { ...treatment, cost: isConsult ? 0 : (treatment.cost ?? 0) });
+      setAppointments((prev) => prev.map((a) => a.id === aptId ? { ...a, treatments: [...a.treatments, saved] } : a));
+      setTreatment({ treatmentName: '', cost: 0 });
+      setTxMsg('Added.');
       fetchAll();
     } catch (err) { setTxMsg(err instanceof Error ? err.message : 'Failed.'); }
     finally { setSavingTx(false); }
@@ -2286,6 +2433,7 @@ export function DoctorDashboard({ user, onLogout }: { user: UserProfile; onLogou
           <div className="space-y-3 max-w-2xl">
             {visible.map((apt) => {
               const isExpanded = expandedId === apt.id;
+              const aptIsConsult = isConsultationType(apt.treatmentType);
               const aptStartMins = toMinsDr(apt.time);
               const isHappeningNow = apt.date === today && aptStartMins <= nowMins && nowMins < aptStartMins + (apt.durationMins ?? 60);
               return (
@@ -2305,11 +2453,11 @@ export function DoctorDashboard({ user, onLogout }: { user: UserProfile; onLogou
                       </div>
                       <div className="flex flex-col items-end gap-1.5 shrink-0">
                         <StatusBadge status={apt.status ?? 'pending'} />
-                        {apt.treatment && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-100">
-                            <Stethoscope className="h-3 w-3" />{apt.treatment.treatmentName}
+                        {apt.treatments.map((t) => (
+                          <span key={t.id} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${aptIsConsult ? 'bg-violet-50 text-violet-700 border-violet-100' : 'bg-blue-50 text-blue-700 border-blue-100'}`}>
+                            <Stethoscope className="h-3 w-3" />{t.treatmentName}{!aptIsConsult && t.cost > 0 ? ` · LKR ${t.cost.toLocaleString()}` : ''}
                           </span>
-                        )}
+                        ))}
                         {apt.payment && (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100">
                             LKR {apt.payment.amount.toLocaleString()}
@@ -2322,38 +2470,176 @@ export function DoctorDashboard({ user, onLogout }: { user: UserProfile; onLogou
                   {/* Inline treatment form */}
                   {isExpanded && (
                     <div className="border-t border-brand-border p-4 space-y-2" onClick={(e) => e.stopPropagation()}>
-                      <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-brand-muted flex items-center gap-1.5">
-                        <Stethoscope className="h-3 w-3" />Record Treatment
-                      </p>
-                      {apt.treatment && (
-                        <div className="bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 text-xs text-emerald-700 font-semibold flex items-center gap-2">
-                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />Treatment recorded — edit below to update.
+                      <div className="flex items-center gap-2">
+                        <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-brand-muted flex items-center gap-1.5">
+                          <Stethoscope className="h-3 w-3" />{aptIsConsult ? 'Treatment Plan' : 'Treatments'}
+                        </p>
+                        {aptIsConsult && (
+                          <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">Plan — no price needed</span>
+                        )}
+                      </div>
+                      {apt.treatments.length > 0 && (
+                        <div className="space-y-1">
+                          {apt.treatments.map((t: TreatmentRecord) => (
+                            <div key={t.id} className={`border rounded-lg px-3 py-2 space-y-1.5 ${aptIsConsult ? 'bg-violet-50 border-violet-100' : 'bg-blue-50 border-blue-100'}`}>
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <p className={`text-xs font-semibold ${aptIsConsult ? 'text-violet-700' : 'text-blue-700'}`}>{t.treatmentName}</p>
+                                  {(!aptIsConsult && t.cost > 0) && (
+                                    <p className={`text-[10px] ${aptIsConsult ? 'text-violet-600' : 'text-blue-600'}`}>LKR {t.cost.toLocaleString()}</p>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <button onClick={async (e) => {
+                                    e.stopPropagation();
+                                    try {
+                                      await deleteTreatment(apt.id, t.id);
+                                      setAppointments((prev) => prev.map((a) => a.id === apt.id ? { ...a, treatments: a.treatments.filter((x) => x.id !== t.id) } : a));
+                                    } catch { /* silent */ }
+                                  }} className="text-[10px] text-red-500 hover:text-red-700 font-bold px-1.5 py-0.5 rounded hover:bg-red-50 transition">✕</button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       )}
                       <input list="doc-dental-treatments" value={treatment.treatmentName}
                         onChange={(e) => setTreatment((p) => ({ ...p, treatmentName: e.target.value }))}
-                        placeholder="Treatment name *"
+                        placeholder={aptIsConsult ? 'Treatment needed (e.g. Crown Placement) *' : 'Treatment name *'}
                         className="w-full border border-brand-border rounded-lg px-3 py-2 text-xs" />
                       <datalist id="doc-dental-treatments">{treatmentTypes.map((t) => <option key={t} value={t} />)}</datalist>
-                      <div className="grid grid-cols-2 gap-2">
+                      {!aptIsConsult && (
                         <input value={treatment.cost ?? 0} type="number" min="0" step="100"
                           onChange={(e) => setTreatment((p) => ({ ...p, cost: Number(e.target.value) }))}
                           placeholder="Cost in LKR"
-                          className="border border-brand-border rounded-lg px-3 py-2 text-xs" />
-                        <input value={treatment.teethNumbers ?? ''}
-                          onChange={(e) => setTreatment((p) => ({ ...p, teethNumbers: e.target.value }))}
-                          placeholder="Teeth numbers (optional)"
-                          className="border border-brand-border rounded-lg px-3 py-2 text-xs" />
-                      </div>
-                      <textarea value={treatment.notes ?? ''}
-                        onChange={(e) => setTreatment((p) => ({ ...p, notes: e.target.value }))}
-                        rows={2} placeholder="Clinical notes (optional)"
-                        className="w-full border border-brand-border rounded-lg px-3 py-2 text-xs resize-none" />
+                          className="w-full border border-brand-border rounded-lg px-3 py-2 text-xs" />
+                      )}
                       <button onClick={() => saveTx(apt.id)} disabled={savingTx || !treatment.treatmentName.trim()}
-                        className="w-full py-2 text-xs font-semibold rounded-lg bg-blue-600 text-white disabled:opacity-50 hover:bg-blue-700 transition">
-                        {savingTx ? 'Saving…' : apt.treatment ? 'Update Treatment' : 'Save Treatment'}
+                        className={`w-full py-2 text-xs font-semibold rounded-lg text-white disabled:opacity-50 transition ${aptIsConsult ? 'bg-violet-600 hover:bg-violet-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                        {savingTx ? 'Saving…' : aptIsConsult ? '+ Add to Plan' : '+ Add Treatment'}
                       </button>
-                      {txMsg && <p className={`text-xs font-semibold ${txMsg === 'Saved.' ? 'text-emerald-700' : 'text-red-600'}`}>{txMsg}</p>}
+                      {txMsg && <p className={`text-xs font-semibold ${txMsg === 'Added.' ? 'text-emerald-700' : 'text-red-600'}`}>{txMsg}</p>}
+
+                      {/* Clinical Notes */}
+                      <div className="pt-3 border-t border-brand-border space-y-2" onClick={(e) => e.stopPropagation()}>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-brand-muted">Clinical Notes</p>
+
+                        {/* Existing note entries */}
+                        {apt.clinicalNotes && (() => {
+                          const entries = apt.clinicalNotes.split('\n\n').filter(Boolean);
+                          return (
+                            <div className="space-y-2">
+                              {entries.map((entry, idx) => {
+                                const tsMatch = entry.match(/^\[(.+?)\]\n?/);
+                                const timestamp = tsMatch ? tsMatch[1] : null;
+                                const body = tsMatch ? entry.slice(tsMatch[0].length) : entry;
+                                const accentBg = aptIsConsult ? 'bg-violet-50 border-violet-100' : 'bg-blue-50 border-blue-100';
+                                const accentText = aptIsConsult ? 'text-violet-700' : 'text-blue-700';
+                                const accentBtn = aptIsConsult ? 'text-violet-500 hover:text-violet-700 hover:bg-violet-100' : 'text-blue-500 hover:text-blue-700 hover:bg-blue-100';
+                                return (
+                                  <div key={idx} className={`border rounded-lg px-3 py-2 space-y-1.5 ${accentBg}`}>
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div className="min-w-0 flex-1">
+                                        {timestamp && <p className="text-[9px] text-brand-muted font-semibold mb-0.5">{timestamp}</p>}
+                                        {editingNoteIdx !== idx && (
+                                          <p className={`text-xs leading-relaxed whitespace-pre-wrap ${accentText}`}>{body}</p>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        <button onClick={() => {
+                                          if (editingNoteIdx === idx) { setEditingNoteIdx(null); } else { setEditingNoteIdx(idx); setEditingNoteText(body); }
+                                        }} className={`text-[10px] font-bold px-1.5 py-0.5 rounded transition ${accentBtn}`}>
+                                          {editingNoteIdx === idx ? 'Cancel' : 'Edit'}
+                                        </button>
+                                        <button onClick={async () => {
+                                          const updated = entries.filter((_, i) => i !== idx).join('\n\n');
+                                          try {
+                                            await saveClinicalNote(apt.id, updated || '');
+                                            setAppointments((prev) => prev.map((a) => a.id === apt.id ? { ...a, clinicalNotes: updated || null } : a));
+                                            if (editingNoteIdx === idx) setEditingNoteIdx(null);
+                                          } catch { /* silent */ }
+                                        }} className="text-[10px] text-red-500 hover:text-red-700 font-bold px-1.5 py-0.5 rounded hover:bg-red-50 transition">✕</button>
+                                      </div>
+                                    </div>
+                                    {editingNoteIdx === idx && (
+                                      <div className="space-y-1.5">
+                                        <textarea
+                                          value={editingNoteText}
+                                          onChange={(e) => setEditingNoteText(e.target.value)}
+                                          rows={3}
+                                          autoFocus
+                                          className={`w-full border rounded-lg px-3 py-2 text-xs resize-none bg-white ${aptIsConsult ? 'border-violet-200' : 'border-blue-200'}`}
+                                        />
+                                        <button onClick={async () => {
+                                          if (!editingNoteText.trim()) return;
+                                          const updated = entries.map((e, i) => i === idx ? (timestamp ? `[${timestamp}]\n${editingNoteText.trim()}` : editingNoteText.trim()) : e).join('\n\n');
+                                          try {
+                                            await saveClinicalNote(apt.id, updated);
+                                            setAppointments((prev) => prev.map((a) => a.id === apt.id ? { ...a, clinicalNotes: updated } : a));
+                                            setEditingNoteIdx(null);
+                                          } catch { /* silent */ }
+                                        }} className={`w-full py-1.5 text-xs font-semibold rounded-lg text-white transition ${aptIsConsult ? 'bg-violet-600 hover:bg-violet-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                                          Save
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
+
+                        {/* Add new note */}
+                        <textarea
+                          value={clinicalNoteDraft}
+                          onChange={(e) => { setClinicalNoteDraft(e.target.value); setClinicalNoteMsg(''); }}
+                          rows={2}
+                          placeholder="Add clinical note…"
+                          className="w-full border border-brand-border rounded-lg px-3 py-2 text-xs resize-none"
+                        />
+                        {clinicalNoteDraft.trim() && (
+                          <button
+                            onClick={async () => {
+                              if (!clinicalNoteDraft.trim()) return;
+                              setSavingClinicalNote(true); setClinicalNoteMsg('');
+                              try {
+                                const ts = new Date().toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                                const entry = `[${ts}]\n${clinicalNoteDraft.trim()}`;
+                                const existing = apt.clinicalNotes;
+                                const combined = existing ? `${existing}\n\n${entry}` : entry;
+                                await saveClinicalNote(apt.id, combined);
+                                setAppointments((prev) => prev.map((a) => a.id === apt.id ? { ...a, clinicalNotes: combined } : a));
+                                setClinicalNoteDraft('');
+                                setClinicalNoteMsg('Saved.');
+                              } catch (err) { setClinicalNoteMsg(err instanceof Error ? err.message : 'Failed.'); }
+                              finally { setSavingClinicalNote(false); }
+                            }}
+                            disabled={savingClinicalNote}
+                            className={`w-full py-2 text-xs font-semibold rounded-lg text-white disabled:opacity-50 transition ${aptIsConsult ? 'bg-violet-600 hover:bg-violet-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                            {savingClinicalNote ? 'Saving…' : '+ Add Note'}
+                          </button>
+                        )}
+                        {clinicalNoteMsg && <p className={`text-xs font-semibold ${clinicalNoteMsg === 'Saved.' ? 'text-emerald-700' : 'text-red-600'}`}>{clinicalNoteMsg}</p>}
+                      </div>
+
+                      {aptIsConsult && (
+                        <div className="pt-3 border-t border-brand-border space-y-2">
+                          <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-brand-muted flex items-center gap-1.5">
+                            <CreditCard className="h-3 w-3" />Consultation Fee
+                          </p>
+                          <div className="flex gap-2">
+                            <input type="number" min="0" step="100" value={consultPrice}
+                              onChange={(e) => setConsultPrice(Number(e.target.value))}
+                              placeholder="Consultation price (LKR)"
+                              className="flex-1 border border-brand-border rounded-lg px-3 py-2 text-xs" />
+                            <button onClick={() => saveConsultPrice(apt.id)} disabled={savingConsultPrice}
+                              className="px-4 py-2 text-xs font-semibold rounded-lg text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 transition shrink-0">
+                              {savingConsultPrice ? 'Saving…' : 'Save Fee'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

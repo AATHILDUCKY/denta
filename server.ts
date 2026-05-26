@@ -690,14 +690,27 @@ async function startServer() {
     try {
       const data = await prisma.appointment.findMany({
         orderBy: [{ createdAt: "desc" }],
-        include: { treatment: true, payment: true },
+        include: { payment: true },
       });
-      // Merge nic/age/gender from raw columns (not in Prisma schema)
-      const extras = await prisma.$queryRawUnsafe<Array<{ id: string; nic: string | null; age: number | null; gender: string | null }>>(
-        `SELECT "id", "nic", "age", "gender" FROM "Appointment"`
+      const extras = await prisma.$queryRawUnsafe<Array<{ id: string; nic: string | null; age: number | null; gender: string | null; clinicalNotes: string | null }>>(
+        `SELECT "id", "nic", "age", "gender", "clinicalNotes" FROM "Appointment"`
       );
+      const treatmentRows = await prisma.$queryRawUnsafe<Array<{
+        id: string; appointmentId: string; patientId: string | null;
+        treatmentName: string; teethNumbers: string | null; notes: string | null;
+        cost: number; createdAt: string; updatedAt: string;
+      }>>(`SELECT * FROM "TreatmentRecord" ORDER BY "createdAt" ASC`);
       const extrasMap = new Map(extras.map((e) => [e.id, e]));
-      const enriched = data.map((a) => ({ ...a, ...extrasMap.get(a.id) }));
+      const treatmentsMap = new Map<string, typeof treatmentRows>();
+      for (const t of treatmentRows) {
+        if (!treatmentsMap.has(t.appointmentId)) treatmentsMap.set(t.appointmentId, []);
+        treatmentsMap.get(t.appointmentId)!.push(t);
+      }
+      const enriched = data.map((a) => ({
+        ...a,
+        ...extrasMap.get(a.id),
+        treatments: treatmentsMap.get(a.id) ?? [],
+      }));
       res.json({ success: true, data: enriched });
     } catch (error) {
       res.status(500).json({ success: false, message: "Failed to load appointments." });
@@ -868,7 +881,7 @@ async function startServer() {
         console.error("Failed to send booking email notifications:", emailError);
       }
 
-      return res.status(201).json({ success: true, data: created });
+      return res.status(201).json({ success: true, data: { ...created, treatments: [], payment: null } });
     } catch (_error) {
       return res.status(500).json({ success: false, message: "Failed to create appointment." });
     }
@@ -1068,12 +1081,14 @@ async function startServer() {
 
   app.get("/api/appointments/:id/treatment", requireAuth, async (req, res) => {
     try {
-      const record = await prisma.treatmentRecord.findUnique({
-        where: { appointmentId: req.params.id },
-      });
-      res.json({ success: true, data: record });
+      const records = await prisma.$queryRawUnsafe<Array<{
+        id: string; appointmentId: string; patientId: string | null;
+        treatmentName: string; teethNumbers: string | null; notes: string | null;
+        cost: number; createdAt: string; updatedAt: string;
+      }>>(`SELECT * FROM "TreatmentRecord" WHERE "appointmentId" = ? ORDER BY "createdAt" ASC`, req.params.id);
+      res.json({ success: true, data: records });
     } catch {
-      res.status(500).json({ success: false, message: "Failed to load treatment." });
+      res.status(500).json({ success: false, message: "Failed to load treatments." });
     }
   });
 
@@ -1085,26 +1100,67 @@ async function startServer() {
     try {
       const appointment = await prisma.appointment.findUnique({ where: { id: req.params.id } });
       if (!appointment) return res.status(404).json({ success: false, message: "Appointment not found." });
-      const record = await prisma.treatmentRecord.upsert({
-        where: { appointmentId: req.params.id },
-        update: {
-          treatmentName: treatmentName.trim(),
-          teethNumbers: teethNumbers?.trim() || null,
-          notes: notes?.trim() || null,
-          cost: Math.max(0, Number(cost) || 0),
-        },
-        create: {
-          appointmentId: req.params.id,
-          patientId: appointment.patientId,
-          treatmentName: treatmentName.trim(),
-          teethNumbers: teethNumbers?.trim() || null,
-          notes: notes?.trim() || null,
-          cost: Math.max(0, Number(cost) || 0),
-        },
-      });
-      res.json({ success: true, data: record });
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      const parsedCost = Math.max(0, Number(cost) || 0);
+      await prisma.$executeRawUnsafe(
+        `INSERT INTO "TreatmentRecord" ("id","appointmentId","patientId","treatmentName","teethNumbers","notes","cost","createdAt","updatedAt")
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+        id, req.params.id, appointment.patientId ?? null,
+        treatmentName.trim(), teethNumbers?.trim() || null, notes?.trim() || null,
+        parsedCost, now, now
+      );
+      const rows = await prisma.$queryRawUnsafe<Array<{
+        id: string; appointmentId: string; patientId: string | null;
+        treatmentName: string; teethNumbers: string | null; notes: string | null;
+        cost: number; createdAt: string; updatedAt: string;
+      }>>(`SELECT * FROM "TreatmentRecord" WHERE "id" = ?`, id);
+      res.json({ success: true, data: rows[0] });
     } catch {
       res.status(500).json({ success: false, message: "Failed to save treatment." });
+    }
+  });
+
+  app.patch("/api/appointments/:id/treatment/:treatmentId", requireAuth, async (req, res) => {
+    const { notes } = req.body as { notes?: string };
+    try {
+      const now = new Date().toISOString();
+      await prisma.$executeRawUnsafe(
+        `UPDATE "TreatmentRecord" SET "notes" = ?, "updatedAt" = ? WHERE "id" = ? AND "appointmentId" = ?`,
+        notes?.trim() || null, now, req.params.treatmentId, req.params.id
+      );
+      res.json({ success: true });
+    } catch {
+      res.status(500).json({ success: false, message: "Failed to update notes." });
+    }
+  });
+
+  app.delete("/api/appointments/:id/treatment/:treatmentId", requireAuth, async (req, res) => {
+    try {
+      await prisma.$executeRawUnsafe(
+        `DELETE FROM "TreatmentRecord" WHERE "id" = ? AND "appointmentId" = ?`,
+        req.params.treatmentId, req.params.id
+      );
+      res.json({ success: true });
+    } catch {
+      res.status(500).json({ success: false, message: "Failed to delete treatment." });
+    }
+  });
+
+  // ── Clinical notes (appointment-level) ───────────────────────────────────────
+
+  app.patch("/api/appointments/:id/clinical-notes", requireAuth, async (req, res) => {
+    const { id } = req.params;
+    const { clinicalNotes } = req.body as { clinicalNotes?: string };
+    try {
+      const now = new Date().toISOString();
+      await prisma.$executeRawUnsafe(
+        `UPDATE "Appointment" SET "clinicalNotes" = ?, "updatedAt" = ? WHERE "id" = ?`,
+        clinicalNotes?.trim() || null, now, id
+      );
+      res.json({ success: true });
+    } catch {
+      res.status(500).json({ success: false, message: "Failed to save clinical note." });
     }
   });
 
@@ -1612,18 +1668,29 @@ async function startServer() {
     try {
       const apts = await prisma.appointment.findMany({
         orderBy: [{ date: "asc" }, { time: "asc" }],
-        include: { treatment: true, payment: true },
+        include: { payment: true },
       });
       const extras = await prisma.$queryRawUnsafe<Array<{ id: string; nic: string | null; age: number | null; gender: string | null }>>(
         `SELECT "id", "nic", "age", "gender" FROM "Appointment"`
       );
+      const treatmentRows = await prisma.$queryRawUnsafe<Array<{ appointmentId: string; treatmentName: string; cost: number }>>(
+        `SELECT "appointmentId","treatmentName","cost" FROM "TreatmentRecord" ORDER BY "createdAt" ASC`
+      );
       const extrasMap = new Map(extras.map((e) => [e.id, e]));
+      const treatmentsMap = new Map<string, typeof treatmentRows>();
+      for (const t of treatmentRows) {
+        if (!treatmentsMap.has(t.appointmentId)) treatmentsMap.set(t.appointmentId, []);
+        treatmentsMap.get(t.appointmentId)!.push(t);
+      }
       const esc = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-      const header = ["ID","Date","Time","First Name","Last Name","NIC","Age","Gender","Phone","Email","Treatment Type","Status","Duration (min)","Notes","Treatment Name","Treatment Cost (LKR)","Payment Status","Amount (LKR)","Amount Paid (LKR)","Balance (LKR)","Created At"];
+      const header = ["ID","Date","Time","First Name","Last Name","NIC","Age","Gender","Phone","Email","Treatment Type","Status","Duration (min)","Notes","Treatments","Total Treatment Cost (LKR)","Payment Status","Amount (LKR)","Amount Paid (LKR)","Balance (LKR)","Created At"];
       const rows = apts.map((a) => {
         const ex = extrasMap.get(a.id);
+        const txs = treatmentsMap.get(a.id) ?? [];
+        const txNames = txs.map((t) => t.treatmentName).join("; ");
+        const txCost = txs.reduce((s, t) => s + t.cost, 0);
         const balance = (a.payment?.amount ?? 0) - (a.payment?.amountPaid ?? 0);
-        return [a.id,a.date,a.time,a.firstName,a.lastName,ex?.nic??'',ex?.age??'',ex?.gender??'',a.phone,a.email,a.treatmentType,a.status,a.durationMins,a.notes??'',a.treatment?.treatmentName??'',a.treatment?.cost??'',a.payment?.status??'',a.payment?.amount??'',a.payment?.amountPaid??'',Math.max(0,balance),a.createdAt.toISOString()].map(esc).join(",");
+        return [a.id,a.date,a.time,a.firstName,a.lastName,ex?.nic??'',ex?.age??'',ex?.gender??'',a.phone,a.email,a.treatmentType,a.status,a.durationMins,a.notes??'',txNames,txCost,a.payment?.status??'',a.payment?.amount??'',a.payment?.amountPaid??'',Math.max(0,balance),a.createdAt.toISOString()].map(esc).join(",");
       });
       const csv = [header.join(","), ...rows].join("\n");
       res.setHeader("Content-Type", "text/csv");
@@ -1701,9 +1768,10 @@ async function startServer() {
 
     const aptCols = await prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info("Appointment")`);
     const an = aptCols.map((c) => c.name);
-    if (!an.includes("nic"))    await prisma.$executeRawUnsafe(`ALTER TABLE "Appointment" ADD COLUMN "nic" TEXT`);
-    if (!an.includes("age"))    await prisma.$executeRawUnsafe(`ALTER TABLE "Appointment" ADD COLUMN "age" INTEGER`);
-    if (!an.includes("gender")) await prisma.$executeRawUnsafe(`ALTER TABLE "Appointment" ADD COLUMN "gender" TEXT`);
+    if (!an.includes("nic"))           await prisma.$executeRawUnsafe(`ALTER TABLE "Appointment" ADD COLUMN "nic" TEXT`);
+    if (!an.includes("age"))           await prisma.$executeRawUnsafe(`ALTER TABLE "Appointment" ADD COLUMN "age" INTEGER`);
+    if (!an.includes("gender"))        await prisma.$executeRawUnsafe(`ALTER TABLE "Appointment" ADD COLUMN "gender" TEXT`);
+    if (!an.includes("clinicalNotes")) await prisma.$executeRawUnsafe(`ALTER TABLE "Appointment" ADD COLUMN "clinicalNotes" TEXT`);
 
     // Backup settings columns in ClinicSettings
     const settingsCols = await prisma.$queryRawUnsafe<Array<{ name: string }>>(`PRAGMA table_info("ClinicSettings")`);
@@ -1712,11 +1780,37 @@ async function startServer() {
     if (!sn.includes("lastBackupAt"))   await prisma.$executeRawUnsafe(`ALTER TABLE "ClinicSettings" ADD COLUMN "lastBackupAt" TEXT`);
   }
 
+  // Migrate TreatmentRecord table to allow multiple treatments per appointment
+  async function ensureMultiTreatmentSupport() {
+    const idxRows = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
+      `SELECT name FROM sqlite_master WHERE type='index' AND name='TreatmentRecord_appointmentId_key'`
+    );
+    if (idxRows.length === 0) return; // already migrated
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE "TreatmentRecord_new" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "appointmentId" TEXT NOT NULL,
+        "patientId" TEXT,
+        "treatmentName" TEXT NOT NULL,
+        "teethNumbers" TEXT,
+        "notes" TEXT,
+        "cost" REAL NOT NULL DEFAULT 0,
+        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" DATETIME NOT NULL
+      )
+    `);
+    await prisma.$executeRawUnsafe(`INSERT INTO "TreatmentRecord_new" SELECT * FROM "TreatmentRecord"`);
+    await prisma.$executeRawUnsafe(`DROP TABLE "TreatmentRecord"`);
+    await prisma.$executeRawUnsafe(`ALTER TABLE "TreatmentRecord_new" RENAME TO "TreatmentRecord"`);
+    await prisma.$executeRawUnsafe(`CREATE INDEX "TreatmentRecord_appointmentId_idx" ON "TreatmentRecord"("appointmentId")`);
+  }
+
   const userCount = await prisma.user.count();
   await ensureSettingsTable();
   await ensureHistoryEventsTable();
   await ensureUserColumns();
   await ensurePatientAppointmentColumns();
+  await ensureMultiTreatmentSupport();
   if (userCount === 0) {
     await prisma.user.createMany({
       data: [
