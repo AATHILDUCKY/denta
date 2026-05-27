@@ -8,7 +8,7 @@ import interactionPlugin from '@fullcalendar/interaction';
 import {
   Users, Calendar as CalendarIcon, Settings, ShieldCheck, FileClock,
   LayoutDashboard, CreditCard, Stethoscope, Plus, ChevronRight, CheckCircle2,
-  Clock, AlertCircle, Ban, Banknote, RefreshCw
+  Clock, AlertCircle, Ban, Banknote, RefreshCw, X
 } from 'lucide-react';
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import {
@@ -1168,6 +1168,8 @@ function DashboardPatientHistory() {
 
   // Book form
   const [bookForm, setBookForm] = useState({ treatmentType: '', date: '', time: '', durationMins: 30, notes: '' });
+  const [bookTreatmentTypes, setBookTreatmentTypes] = useState<string[]>([]);
+  const [bookTreatmentDraft, setBookTreatmentDraft] = useState('');
   const [booking, setBooking] = useState(false);
   const [bookMsg, setBookMsg] = useState('');
 
@@ -1248,6 +1250,8 @@ function DashboardPatientHistory() {
     setPaymentMsg('');
     setBookMsg('');
     setBookForm({ treatmentType: '', date: '', time: '', durationMins: 30, notes: '' });
+    setBookTreatmentTypes([]);
+    setBookTreatmentDraft('');
   }, [selectedId]);
 
   const selectApt = (apt: AppointmentRecord | null) => {
@@ -1297,6 +1301,26 @@ function DashboardPatientHistory() {
   }, [selected, appointments]);
 
   const balance = payment.amount - payment.amountPaid;
+
+  const selectedBookTreatmentTypes = useMemo(() => {
+    const draft = bookTreatmentDraft.trim();
+    if (!draft) return bookTreatmentTypes;
+    const alreadyAdded = bookTreatmentTypes.some((type) => type.toLowerCase() === draft.toLowerCase());
+    return alreadyAdded ? bookTreatmentTypes : [...bookTreatmentTypes, draft];
+  }, [bookTreatmentTypes, bookTreatmentDraft]);
+
+  const addBookTreatmentType = (value = bookTreatmentDraft) => {
+    const next = value.trim();
+    if (!next) return;
+    setBookTreatmentTypes((prev) => (
+      prev.some((type) => type.toLowerCase() === next.toLowerCase()) ? prev : [...prev, next]
+    ));
+    setBookTreatmentDraft('');
+  };
+
+  const removeBookTreatmentType = (value: string) => {
+    setBookTreatmentTypes((prev) => prev.filter((type) => type !== value));
+  };
 
   const eventLabel = (type: string) => ({
     appointment_created: 'Appointment Created', appointment_rescheduled: 'Rescheduled',
@@ -1655,12 +1679,60 @@ function DashboardPatientHistory() {
                     <p className="text-xs text-brand-muted">{selected.phone}{selected.email ? ` · ${selected.email}` : ''}</p>
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold uppercase tracking-wide text-brand-muted mb-1">Treatment Type *</label>
-                    <input list="dental-treatments-book-h" value={bookForm.treatmentType}
-                      onChange={(e) => setBookForm((p) => ({ ...p, treatmentType: e.target.value }))}
-                      placeholder="e.g. Crown Placement"
-                      className="w-full border border-brand-border rounded-lg px-3 py-2 text-xs" />
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <label className="block text-[10px] font-bold uppercase tracking-wide text-brand-muted">Treatment Type *</label>
+                      {selectedBookTreatmentTypes.length > 0 && (
+                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
+                          {selectedBookTreatmentTypes.length} selected
+                        </span>
+                      )}
+                    </div>
+                    {bookTreatmentTypes.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mb-2">
+                        {bookTreatmentTypes.map((type) => (
+                          <span key={type} className="inline-flex items-center gap-1 rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-[10px] font-bold text-blue-700">
+                            <Stethoscope className="h-3 w-3" />{type}
+                            <button type="button" onClick={() => removeBookTreatmentType(type)}
+                              className="ml-0.5 rounded-full p-0.5 text-blue-500 hover:bg-blue-100 hover:text-blue-800 transition"
+                              aria-label={`Remove ${type}`}>
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex gap-2">
+                      <input list="dental-treatments-book-h" value={bookTreatmentDraft}
+                        onChange={(e) => setBookTreatmentDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            addBookTreatmentType();
+                          }
+                        }}
+                        placeholder="e.g. Crown Placement"
+                        className="w-full border border-brand-border rounded-lg px-3 py-2 text-xs" />
+                      <button type="button" onClick={() => addBookTreatmentType()}
+                        disabled={!bookTreatmentDraft.trim()}
+                        className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50 hover:bg-blue-700 transition">
+                        <Plus className="h-3.5 w-3.5" />Add
+                      </button>
+                    </div>
                     <datalist id="dental-treatments-book-h">{treatmentTypes.map((t) => <option key={t} value={t} />)}</datalist>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {treatmentTypes.slice(0, 8).map((type) => {
+                        const active = bookTreatmentTypes.some((item) => item.toLowerCase() === type.toLowerCase());
+                        return (
+                          <button key={type} type="button"
+                            onClick={() => active ? removeBookTreatmentType(type) : addBookTreatmentType(type)}
+                            className={`rounded-full border px-2.5 py-1 text-[10px] font-bold transition ${
+                              active ? 'border-blue-200 bg-blue-100 text-blue-800' : 'border-brand-border bg-white text-brand-muted hover:border-blue-200 hover:text-blue-700'
+                            }`}>
+                            {type}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
                     <div>
@@ -1704,7 +1776,8 @@ function DashboardPatientHistory() {
                       className="w-full border border-brand-border rounded-lg px-3 py-2 text-xs resize-none" />
                   </div>
                   <button onClick={async () => {
-                    if (!bookForm.treatmentType || !bookForm.date || !bookForm.time) {
+                    const treatmentType = selectedBookTreatmentTypes.join(', ');
+                    if (!treatmentType || !bookForm.date || !bookForm.time) {
                       setBookMsg('Treatment type, date and time are required.'); return;
                     }
                     setBooking(true); setBookMsg('');
@@ -1714,7 +1787,7 @@ function DashboardPatientHistory() {
                         lastName: selected.lastName,
                         email: selected.email ?? '',
                         phone: selected.phone,
-                        treatmentType: bookForm.treatmentType,
+                        treatmentType,
                         date: bookForm.date,
                         time: bookForm.time,
                         durationMins: bookForm.durationMins,
@@ -1723,6 +1796,8 @@ function DashboardPatientHistory() {
                       });
                       setBookMsg('Appointment booked!');
                       setBookForm({ treatmentType: '', date: '', time: '', durationMins: 30, notes: '' });
+                      setBookTreatmentTypes([]);
+                      setBookTreatmentDraft('');
                       await refreshData(true);
                       setActiveTab('appointments');
                     } catch (err) { setBookMsg(err instanceof Error ? err.message : 'Failed.'); }
