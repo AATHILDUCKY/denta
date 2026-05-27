@@ -2542,58 +2542,67 @@ export function DoctorDashboard({ user, onLogout }: { user: UserProfile; onLogou
                     </div>
                   </div>
 
-                  {/* Inline treatment form */}
+                  {/* Inline appointment controls */}
                   {isExpanded && (
                     <div className="border-t border-brand-border p-4 space-y-2" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex items-center gap-2">
-                        <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-brand-muted flex items-center gap-1.5">
-                          <Stethoscope className="h-3 w-3" />{aptIsConsult ? 'Treatment Plan' : 'Treatments'}
-                        </p>
-                        {aptIsConsult && (
-                          <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">Plan — no price needed</span>
-                        )}
-                      </div>
-                      {apt.treatments.length > 0 && (
-                        <div className="space-y-1">
-                          {apt.treatments.map((t: TreatmentRecord) => (
-                            <div key={t.id} className={`border rounded-lg px-3 py-2 space-y-1.5 ${aptIsConsult ? 'bg-violet-50 border-violet-100' : 'bg-blue-50 border-blue-100'}`}>
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="min-w-0 flex-1">
-                                  <p className={`text-xs font-semibold ${aptIsConsult ? 'text-violet-700' : 'text-blue-700'}`}>{t.treatmentName}</p>
-                                  {(!aptIsConsult && t.cost > 0) && (
-                                    <p className={`text-[10px] ${aptIsConsult ? 'text-violet-600' : 'text-blue-600'}`}>LKR {t.cost.toLocaleString()}</p>
-                                  )}
+                      {aptIsConsult && (
+                        <>
+                          <div className="flex items-center gap-2">
+                            <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-brand-muted flex items-center gap-1.5">
+                              <Stethoscope className="h-3 w-3" />Treatment Plan
+                            </p>
+                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700">Plan — no price needed</span>
+                          </div>
+                          {apt.treatments.length > 0 && (
+                            <div className="space-y-1">
+                              {apt.treatments.map((t: TreatmentRecord) => (
+                                <div key={t.id} className="border rounded-lg px-3 py-2 space-y-1.5 bg-violet-50 border-violet-100">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0 flex-1">
+                                      <p className="text-xs font-semibold text-violet-700">{t.treatmentName}</p>
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <button onClick={async (e) => {
+                                        e.stopPropagation();
+                                        try {
+                                          await deleteTreatment(apt.id, t.id);
+                                          setAppointments((prev) => prev.map((a) => a.id === apt.id ? { ...a, treatments: a.treatments.filter((x) => x.id !== t.id) } : a));
+                                        } catch { /* silent */ }
+                                      }} className="text-[10px] text-red-500 hover:text-red-700 font-bold px-1.5 py-0.5 rounded hover:bg-red-50 transition">✕</button>
+                                    </div>
+                                  </div>
                                 </div>
-                                <div className="flex items-center gap-1 shrink-0">
-                                  <button onClick={async (e) => {
-                                    e.stopPropagation();
-                                    try {
-                                      await deleteTreatment(apt.id, t.id);
-                                      setAppointments((prev) => prev.map((a) => a.id === apt.id ? { ...a, treatments: a.treatments.filter((x) => x.id !== t.id) } : a));
-                                    } catch { /* silent */ }
-                                  }} className="text-[10px] text-red-500 hover:text-red-700 font-bold px-1.5 py-0.5 rounded hover:bg-red-50 transition">✕</button>
-                                </div>
-                              </div>
+                              ))}
                             </div>
-                          ))}
+                          )}
+                          <input list="doc-dental-treatments" value={treatment.treatmentName}
+                            onChange={(e) => setTreatment((p) => ({ ...p, treatmentName: e.target.value }))}
+                            placeholder="Treatment needed (e.g. Crown Placement) *"
+                            className="w-full border border-brand-border rounded-lg px-3 py-2 text-xs" />
+                          <datalist id="doc-dental-treatments">{treatmentTypes.map((t) => <option key={t} value={t} />)}</datalist>
+                          <button onClick={() => saveTx(apt.id)} disabled={savingTx || !treatment.treatmentName.trim()}
+                            className="w-full py-2 text-xs font-semibold rounded-lg text-white disabled:opacity-50 transition bg-violet-600 hover:bg-violet-700">
+                            {savingTx ? 'Saving…' : '+ Add to Plan'}
+                          </button>
+                          {txMsg && <p className={`text-xs font-semibold ${txMsg === 'Added.' ? 'text-emerald-700' : 'text-red-600'}`}>{txMsg}</p>}
+                        </>
+                      )}
+
+                      <div className={`${aptIsConsult ? 'pt-3 border-t border-brand-border' : ''} space-y-2`}>
+                        <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-brand-muted flex items-center gap-1.5">
+                          <CreditCard className="h-3 w-3" />{aptIsConsult ? 'Consultation Fee' : 'Treatment Price'}
+                        </p>
+                        <div className="flex gap-2">
+                          <input type="number" min="0" step="100" value={consultPrice}
+                            onChange={(e) => setConsultPrice(Number(e.target.value))}
+                            placeholder={aptIsConsult ? 'Consultation price (LKR)' : 'Treatment price (LKR)'}
+                            className="flex-1 border border-brand-border rounded-lg px-3 py-2 text-xs" />
+                          <button onClick={() => saveConsultPrice(apt.id)} disabled={savingConsultPrice}
+                            className={`px-4 py-2 text-xs font-semibold rounded-lg text-white disabled:opacity-50 transition shrink-0 ${aptIsConsult ? 'bg-violet-600 hover:bg-violet-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                            {savingConsultPrice ? 'Saving…' : aptIsConsult ? 'Save Fee' : 'Save Price'}
+                          </button>
                         </div>
-                      )}
-                      <input list="doc-dental-treatments" value={treatment.treatmentName}
-                        onChange={(e) => setTreatment((p) => ({ ...p, treatmentName: e.target.value }))}
-                        placeholder={aptIsConsult ? 'Treatment needed (e.g. Crown Placement) *' : 'Treatment name *'}
-                        className="w-full border border-brand-border rounded-lg px-3 py-2 text-xs" />
-                      <datalist id="doc-dental-treatments">{treatmentTypes.map((t) => <option key={t} value={t} />)}</datalist>
-                      {!aptIsConsult && (
-                        <input value={treatment.cost ?? 0} type="number" min="0" step="100"
-                          onChange={(e) => setTreatment((p) => ({ ...p, cost: Number(e.target.value) }))}
-                          placeholder="Cost in LKR"
-                          className="w-full border border-brand-border rounded-lg px-3 py-2 text-xs" />
-                      )}
-                      <button onClick={() => saveTx(apt.id)} disabled={savingTx || !treatment.treatmentName.trim()}
-                        className={`w-full py-2 text-xs font-semibold rounded-lg text-white disabled:opacity-50 transition ${aptIsConsult ? 'bg-violet-600 hover:bg-violet-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
-                        {savingTx ? 'Saving…' : aptIsConsult ? '+ Add to Plan' : '+ Add Treatment'}
-                      </button>
-                      {txMsg && <p className={`text-xs font-semibold ${txMsg === 'Added.' ? 'text-emerald-700' : 'text-red-600'}`}>{txMsg}</p>}
+                      </div>
 
                       {/* Clinical Notes */}
                       <div className="pt-3 border-t border-brand-border space-y-2" onClick={(e) => e.stopPropagation()}>
@@ -2698,23 +2707,6 @@ export function DoctorDashboard({ user, onLogout }: { user: UserProfile; onLogou
                         {clinicalNoteMsg && <p className={`text-xs font-semibold ${clinicalNoteMsg === 'Saved.' ? 'text-emerald-700' : 'text-red-600'}`}>{clinicalNoteMsg}</p>}
                       </div>
 
-                      {aptIsConsult && (
-                        <div className="pt-3 border-t border-brand-border space-y-2">
-                          <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-brand-muted flex items-center gap-1.5">
-                            <CreditCard className="h-3 w-3" />Consultation Fee
-                          </p>
-                          <div className="flex gap-2">
-                            <input type="number" min="0" step="100" value={consultPrice}
-                              onChange={(e) => setConsultPrice(Number(e.target.value))}
-                              placeholder="Consultation price (LKR)"
-                              className="flex-1 border border-brand-border rounded-lg px-3 py-2 text-xs" />
-                            <button onClick={() => saveConsultPrice(apt.id)} disabled={savingConsultPrice}
-                              className="px-4 py-2 text-xs font-semibold rounded-lg text-white bg-violet-600 hover:bg-violet-700 disabled:opacity-50 transition shrink-0">
-                              {savingConsultPrice ? 'Saving…' : 'Save Fee'}
-                            </button>
-                          </div>
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>
